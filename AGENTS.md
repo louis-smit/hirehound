@@ -10,6 +10,65 @@ See @docs/*.md
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 - If you want to create new html/json route, context, migration, cert, channel, liveview, socket, schema, presence tracker, etc prefer giving the user a `mix phx.new.*` task and asking the user to run that for you rather than just creating these files yourself, unless the user tells you otherwise.
 
+## MCP Servers
+
+- **Tidewave MCP Server** is installed and available
+
+## Hirehound-Specific Guidelines
+
+### Standard Library Choices
+
+- **HTTP Client:** Use `Req` (already included), **avoid** `:httpoison`, `:tesla`, `:httpc`
+- **LLM Calls:** Use `ReqLLM` when needed for AI/LLM integration
+- **Background Jobs:** Use `Oban` (already included) for job processing
+- **Workflows:** Use `Oban Pro` for complex multi-step workflows (DAGs with dependencies)
+  - **Do NOT use Jido** unless we explicitly need AI-driven agentic systems with LLM planning
+  - For deterministic ETL pipelines (scraping, parsing, deduplication), use Oban Pro Workflows
+- **HTML Parsing:** Use `Floki` for parsing scraped HTML
+- **Mocking:** Use `Mox` for test mocks
+- **HTTP Recording:** Use `ExVCR` for recording/replaying HTTP interactions in tests
+- **JSON:** Use `Jason` (built-in)
+- **CSV:** Use `NimbleCSV` if needed
+
+### Development Workflow
+
+- **IEx-first development:** Always start in IEx (`iex -S mix`) to manually test before writing code
+- **Iterative approach:** Manual exploration → codify → test manually → write tests → automate
+- **Do NOT build UI first** - Build and test core functionality in IEx before adding interfaces
+
+### Scraper Architecture
+
+- **Use behaviours** for scrapers: All scrapers implement `Hirehound.Scrapers.JobBoardBehaviour`
+- **Separate listing vs detail pages:**
+  - `scrape_listing_page/1` - Scrapes pages with MULTIPLE jobs (e.g., `/jobs`, `/jobs?page=2`)
+  - `scrape_detail_page/1` - Scrapes pages with ONE job (e.g., `/jobs/12345`)
+  - **Never confuse these two** - use appropriate selectors for each page type
+- **URL-based routing support:**
+  - Each scraper implements `url_patterns/0` callback declaring which domains/paths it handles
+  - Enables both direct calls (`PNetScraper.scrape_listing_page(url)`) AND auto-routing (`Scraper.scrape_url(url)`)
+  - Direct calls for production/tests, auto-routing for IEx exploration and user input
+
+### Data Model
+
+- **Organizations are first-class entities** - Separate table with own deduplication, not just fields on job postings
+- **Both jobs and organizations get deduplicated** using multi-stage pipelines (exact → near → fuzzy)
+- **Use duplicate clusters** - Group duplicates with a canonical member
+- **Store raw data** - Always preserve original scraped data in JSONB `raw_data` field
+- **Track provenance** - Record which source(s) contributed to each entity
+
+### Background Job Patterns
+
+- **Use Oban workers** for individual tasks (scraping, parsing, etc.)
+- **Use Oban Pro Workflows** for multi-step pipelines with dependencies
+- **Make workers idempotent** - Safe to retry without side effects
+- **Use appropriate queues:**
+  - `:scraping` - Web scraping (rate-limited)
+  - `:processing` - Data processing
+  - `:deduplication` - Duplicate detection
+  - `:ml` - ML/vectorization tasks
+  - `:indexing` - Search index updates
+  - `:enrichment` - External API calls
+
 ### Phoenix v1.8 guidelines
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
