@@ -87,6 +87,20 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 - Monitoring & observability
 - Failure handling & resilience
 
+### 🛠️ [06 - Development Practices](./06-development-practices.md)
+
+**How we build software** - Elixir-native, iterative, REPL-first development.
+
+**Key Topics:**
+
+- **Standard library choices** (Req, Jido, Oban)
+- **IEx-first workflow** (REPL before UI)
+- **Behaviour-based architecture** (JobBoard behaviour)
+- **Iterative development** (manual → test → automate)
+- Code organization patterns
+- Testing philosophy
+- Migration strategies
+
 ## Quick Start Guide
 
 If you're new to the project, we recommend reading in this order:
