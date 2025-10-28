@@ -15,6 +15,38 @@ An individual job advertisement/vacancy scraped from a job board. Each posting i
 
 **NOT to be confused with:** "Job listing" (less accurate term we avoid)
 
+### Listing Page vs Detail Page ⚠️ IMPORTANT
+
+**Critical distinction for scrapers:**
+
+**Listing Page (Index Page)**
+- A page that displays **multiple jobs** (search results, category page)
+- Contains **summary information** for each job (title, company, location)
+- May or may not have full job details
+- Examples:
+  - `https://www.pnet.co.za/jobs` (shows 20+ jobs)
+  - `https://www.pnet.co.za/jobs?category=it&page=2`
+  - `https://careers.company.com/openings`
+
+**Detail Page (Job Page)**
+- A page for **one specific job** with full information
+- Contains complete job description, requirements, application details
+- Usually has unique ID in URL
+- Examples:
+  - `https://www.pnet.co.za/jobs/12345`
+  - `https://careers.company.com/openings/senior-developer-cape-town`
+  - `https://www.linkedin.com/jobs/view/3456789`
+
+**Why this matters:**
+- ❌ **Common mistake:** Writing a scraper that expects multiple jobs but receives detail page (or vice versa)
+- ❌ **Wrong:** Using detail page selectors on listing page
+- ✅ **Correct:** Separate functions/logic for listing vs detail pages
+
+**Scraping patterns:**
+1. **Two-stage scraping:** Scrape listing pages to get job URLs → scrape detail pages for full data
+2. **Listing-only scraping:** If listing page has enough info, skip detail pages
+3. **Hybrid:** Get basics from listing, enrich from detail page if needed
+
 ### Organization
 A company, employer, or hiring entity. Organizations are **first-class entities** in Hirehound with their own profiles, independent of job postings.
 

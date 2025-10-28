@@ -93,7 +93,7 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 
 **Key Topics:**
 
-- **Standard library choices** (Req, Jido, Oban)
+- **Standard library choices** (Req, Oban/Oban Pro)
 - **IEx-first workflow** (REPL before UI)
 - **Behaviour-based architecture** (JobBoard behaviour)
 - **Iterative development** (manual → test → automate)

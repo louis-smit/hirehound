@@ -65,44 +65,60 @@ Req.new()
 - Token counting
 - Multiple provider support
 
-### Workflow Orchestration: Jido (+ Oban)
+### Workflow Orchestration: Oban (+ Oban Pro)
 
-**Use:** [Jido](https://github.com/agentjido/jido) for agentic workflows + Oban for job processing
+**Use:** [Oban](https://hexdocs.pm/oban) for background jobs + [Oban Pro](https://getoban.pro) for workflows
 
 ```elixir
-# ✅ GOOD: Jido for complex agent workflows
-defmodule Hirehound.Agents.JobScraperAgent do
-  use Jido.Agent
-  
-  def run(context, params) do
-    context
-    |> scrape_url(params.url)
-    |> parse_html()
-    |> extract_jobs()
-    |> normalize_data()
-  end
-end
-
-# Oban for background job processing
+# ✅ GOOD: Oban for reliable job processing
 defmodule Hirehound.Workers.ScrapingWorker do
-  use Oban.Worker
+  use Oban.Worker, queue: :scraping
   
   @impl Oban.Worker
   def perform(%Job{args: %{"url" => url}}) do
-    Hirehound.Agents.JobScraperAgent.execute(%{url: url})
+    # Simple, deterministic job
+    url
+    |> fetch_html()
+    |> parse_jobs()
+    |> save_to_db()
+  end
+end
+
+# Oban Pro for complex workflows (DAGs with dependencies)
+defmodule Hirehound.Workflows.JobIngestion do
+  use Oban.Pro.Workers.Workflow
+  
+  @impl Oban.Pro.Workers.Workflow
+  def process(%Job{args: %{"job_posting_id" => id}}) do
+    # Build DAG with dependencies
+    Workflow.new()
+    |> Workflow.add(:parse, ParseWorker.new(%{id: id}))
+    |> Workflow.add(:normalize, NormalizeWorker.new(%{id: id}), deps: [:parse])
+    |> Workflow.add(:deduplicate, DeduplicateWorker.new(%{id: id}), deps: [:normalize])
+    |> Workflow.add(:index, IndexWorker.new(%{id: id}), deps: [:deduplicate])
   end
 end
 ```
 
-**Why Jido + Oban:**
-- Jido: Agent-based workflows, state management, composability
-- Oban: Reliable job queue, great for scheduled/background work
-- Complementary: Jido for logic, Oban for orchestration
+**Why Oban (Pro):**
+- Reliable, persistent job queue (PostgreSQL-backed)
+- Scheduled/cron jobs built-in
+- Automatic retries with exponential backoff
+- **Workflows (Pro):** DAG orchestration, fan-out/fan-in, conditional logic
+- Cluster-safe, distributed
+- Excellent observability (Oban Web dashboard)
+
+**Why NOT Jido (for now):**
+- ❌ Jido is for **AI-driven agentic systems** (LLM planning, autonomous agents)
+- ❌ We need **deterministic pipelines**, not adaptive AI agents
+- ✅ If we add AI enrichment later, we can call LLMs from Oban workers
+- ✅ Only add Jido if we need agents that *reason* and *adapt* autonomously
 
 **Alternatives considered:**
 - ❌ GenStage/Flow - Too low-level for our needs
 - ❌ Broadway - Overkill for our data volumes
-- ✅ Jido + Oban - Right abstraction level
+- ❌ Jido - Designed for agentic AI, not ETL pipelines
+- ✅ Oban (Pro) - Perfect fit for job processing + workflow orchestration
 
 ### HTML Parsing: Floki
 
@@ -177,14 +193,16 @@ end
 |---------|---------|-------|
 | HTTP Client | **Req** | HTTPoison, Finch directly |
 | LLM Calls | **ReqLLM** | Custom HTTP code |
-| Workflows | **Jido** + **Oban** | GenStage, Broadway |
+| Background Jobs | **Oban** | Exq, Faktory |
+| Workflows | **Oban Pro** | GenStage, Broadway, Jido* |
 | HTML Parsing | **Floki** | Custom regex parsing |
 | Mocking | **Mox** | :meck, global mocks |
 | HTTP Recording | **ExVCR** | Manual fixture files |
 | Database | **Ecto** | Raw SQL (except when needed) |
-| Background Jobs | **Oban (Pro)** | Exq, Faktory |
 | JSON | **Jason** | Poison |
 | CSV | **NimbleCSV** | Custom parsers |
+
+**Note on Jido:*** Jido is for AI-driven agentic systems. Only add if you need LLM-powered agents that plan and adapt autonomously. For deterministic ETL pipelines, use Oban Pro Workflows.
 
 ---
 
@@ -194,14 +212,24 @@ end
 
 **Start in the REPL, not in code files.**
 
+**⚠️ CRITICAL: Check if URL is Listing or Detail Page First!**
+
 ```elixir
 # 1. Start IEx with your app
 $ iex -S mix
 
-# 2. Manually test individual functions
-iex> url = "https://www.pnet.co.za/jobs"
-iex> {:ok, response} = Req.get(url)
+# 2. First, identify what TYPE of page you're scraping!
+iex> listing_url = "https://www.pnet.co.za/jobs"  # Shows MULTIPLE jobs
+iex> detail_url = "https://www.pnet.co.za/jobs/12345"  # Shows ONE job
+
+# 3. Manually test - start with listing page
+iex> {:ok, response} = Req.get(listing_url)
 iex> response.body |> String.slice(0, 200)  # Inspect HTML
+
+# Check: Does this page show multiple jobs or just one?
+iex> doc = Floki.parse_document!(response.body)
+iex> job_cards = Floki.find(doc, ".job-result-card")
+iex> length(job_cards)  # If > 1, it's a listing page ✓
 
 # 3. Experiment with parsing
 iex> html = response.body
@@ -351,6 +379,16 @@ defmodule Hirehound.Scrapers.JobBoardBehaviour do
   Behaviour for job board scrapers.
   
   Each job board (PNet, LinkedIn, CareerJunction) implements this behaviour.
+  
+  ## IMPORTANT: Listing Pages vs Detail Pages
+  
+  Do NOT confuse:
+  - **Listing pages** - Show MULTIPLE jobs (e.g., /jobs, /jobs?page=2)
+  - **Detail pages** - Show ONE job with full info (e.g., /jobs/12345)
+  
+  Most scrapers use a two-stage process:
+  1. Scrape listing pages to get job URLs/IDs
+  2. Scrape detail pages for full job data
   """
   
   @doc """
@@ -360,43 +398,61 @@ defmodule Hirehound.Scrapers.JobBoardBehaviour do
     name: String.t(),
     base_url: String.t(),
     rate_limit: integer(),
-    scraping_frequency: atom()  # :hourly, :daily, etc.
+    scraping_frequency: atom(),  # :hourly, :daily, etc.
+    requires_detail_page: boolean()  # true if must visit detail page for full data
   }
   
   @doc """
-  Scrapes a single page and returns raw job data.
+  Scrapes a LISTING PAGE (shows multiple jobs).
   
-  Returns `{:ok, [%RawJob{}, ...]}` or `{:error, reason}`.
+  Returns list of job summaries, which may include detail page URLs.
+  
+  Returns `{:ok, [%{title: ..., detail_url: ...}, ...]}` or `{:error, reason}`.
   """
-  @callback scrape_page(url :: String.t()) :: 
+  @callback scrape_listing_page(url :: String.t()) :: 
     {:ok, list(map())} | {:error, term()}
   
   @doc """
-  Generates list of URLs to scrape for this job board.
+  Scrapes a DETAIL PAGE (single job with full information).
   
-  Some boards have multiple pages, search filters, etc.
+  Only needed if listing page doesn't have complete data.
+  
+  Returns `{:ok, %{title: ..., description: ..., requirements: ...}}` or `{:error, reason}`.
   """
-  @callback generate_urls(opts :: keyword()) :: list(String.t())
+  @callback scrape_detail_page(url :: String.t()) :: 
+    {:ok, map()} | {:error, term()}
+  
+  @doc """
+  Generates list of LISTING PAGE URLs to scrape for this job board.
+  
+  These should be pages that show multiple jobs (search results, category pages).
+  NOT detail pages for individual jobs.
+  """
+  @callback generate_listing_urls(opts :: keyword()) :: list(String.t())
   
   @doc """
   Normalizes raw scraped data into our unified schema.
+  
+  Works for data from either listing or detail pages.
   """
   @callback normalize_job(raw_job :: map()) :: 
     {:ok, map()} | {:error, term()}
   
   @doc """
-  Detects if a page has more results (pagination).
+  Detects if a listing page has more results (pagination).
   """
   @callback has_next_page?(html :: String.t()) :: boolean()
   
   @doc """
-  Extracts the next page URL from HTML.
+  Extracts the next listing page URL from HTML.
   """
   @callback next_page_url(html :: String.t()) :: String.t() | nil
 end
 ```
 
 ### Implementing the Behaviour
+
+#### Example 1: Two-Stage Scraping (Listing → Detail)
 
 ```elixir
 # lib/hirehound/scrapers/pnet_scraper.ex
@@ -412,22 +468,62 @@ defmodule Hirehound.Scrapers.PNetScraper do
       name: "PNet",
       base_url: "https://www.pnet.co.za",
       rate_limit: 100,  # requests per minute
-      scraping_frequency: :hourly
+      scraping_frequency: :hourly,
+      requires_detail_page: true  # Must visit detail page for full description
     }
   end
   
   @impl true
-  def scrape_page(url) do
-    # Implementation from our IEx exploration
+  def scrape_listing_page(url) do
+    # Scrape page that shows MULTIPLE jobs
+    with {:ok, response} <- Req.get(url),
+         {:ok, doc} <- Floki.parse_document(response.body) do
+      
+      jobs = 
+        doc
+        |> Floki.find(".job-result-card")  # Listing page selector
+        |> Enum.map(fn card ->
+          %{
+            title: Floki.find(card, ".job-title") |> Floki.text(),
+            company: Floki.find(card, ".company-name") |> Floki.text(),
+            location: Floki.find(card, ".location") |> Floki.text(),
+            # IMPORTANT: Extract URL to detail page
+            detail_url: Floki.find(card, "a.job-link") |> Floki.attribute("href") |> List.first()
+          }
+        end)
+      
+      {:ok, jobs}
+    end
   end
   
   @impl true
-  def generate_urls(opts) do
-    # Generate URLs for different categories, locations, etc.
+  def scrape_detail_page(url) do
+    # Scrape page for ONE specific job with full info
+    with {:ok, response} <- Req.get(url),
+         {:ok, doc} <- Floki.parse_document(response.body) do
+      
+      job = %{
+        title: Floki.find(doc, "h1.job-title") |> Floki.text(),
+        company: Floki.find(doc, ".company-name") |> Floki.text(),
+        location: Floki.find(doc, ".job-location") |> Floki.text(),
+        # Detail page has full description
+        description: Floki.find(doc, ".job-description") |> Floki.raw_html(),
+        requirements: Floki.find(doc, ".requirements") |> Floki.raw_html(),
+        salary: Floki.find(doc, ".salary") |> Floki.text(),
+        posted_date: Floki.find(doc, ".posted-date") |> Floki.text()
+      }
+      
+      {:ok, job}
+    end
+  end
+  
+  @impl true
+  def generate_listing_urls(opts) do
+    # Generate URLs for LISTING PAGES (not detail pages!)
     categories = Keyword.get(opts, :categories, ["it", "engineering"])
     
     Enum.map(categories, fn category ->
-      "https://www.pnet.co.za/jobs/#{category}"
+      "https://www.pnet.co.za/jobs?category=#{category}"  # Listing page
     end)
   end
   
@@ -438,6 +534,7 @@ defmodule Hirehound.Scrapers.PNetScraper do
       title: normalize_title(raw_job.title),
       company_name: normalize_company(raw_job.company),
       location: parse_location(raw_job.location),
+      description: raw_job.description,
       # ...
     }}
   end
@@ -456,6 +553,107 @@ defmodule Hirehound.Scrapers.PNetScraper do
     |> Floki.find(".pagination .next")
     |> Floki.attribute("href")
     |> List.first()
+  end
+end
+```
+
+#### Example 2: Listing-Only Scraping (No Detail Page Needed)
+
+Some job boards include full job information on the listing page itself.
+
+```elixir
+# lib/hirehound/scrapers/simple_board_scraper.ex
+defmodule Hirehound.Scrapers.SimpleBoardScraper do
+  @behaviour Hirehound.Scrapers.JobBoardBehaviour
+  
+  @impl true
+  def metadata do
+    %{
+      name: "SimpleJobBoard",
+      base_url: "https://www.simplejobs.co.za",
+      rate_limit: 50,
+      scraping_frequency: :daily,
+      requires_detail_page: false  # Listing page has all data!
+    }
+  end
+  
+  @impl true
+  def scrape_listing_page(url) do
+    # Listing page has COMPLETE job information
+    with {:ok, response} <- Req.get(url),
+         {:ok, doc} <- Floki.parse_document(response.body) do
+      
+      jobs = 
+        doc
+        |> Floki.find(".job-card")
+        |> Enum.map(fn card ->
+          %{
+            title: Floki.find(card, ".title") |> Floki.text(),
+            company: Floki.find(card, ".company") |> Floki.text(),
+            location: Floki.find(card, ".location") |> Floki.text(),
+            # Full description available on listing page
+            description: Floki.find(card, ".description") |> Floki.raw_html(),
+            requirements: Floki.find(card, ".requirements") |> Floki.raw_html(),
+            salary: Floki.find(card, ".salary") |> Floki.text(),
+            detail_url: nil  # Don't need it!
+          }
+        end)
+      
+      {:ok, jobs}
+    end
+  end
+  
+  @impl true
+  def scrape_detail_page(_url) do
+    # Not needed for this job board
+    {:error, :not_required}
+  end
+  
+  @impl true
+  def generate_listing_urls(_opts) do
+    [
+      "https://www.simplejobs.co.za/jobs",
+      "https://www.simplejobs.co.za/jobs?page=2"
+    ]
+  end
+  
+  # ... other callbacks
+end
+```
+
+#### Orchestrating Two-Stage Scraping
+
+```elixir
+defmodule Hirehound.Scrapers.Orchestrator do
+  @doc """
+  Scrapes a job board using appropriate strategy.
+  """
+  def scrape_board(scraper_module) do
+    metadata = scraper_module.metadata()
+    
+    scraper_module.generate_listing_urls([])
+    |> Enum.flat_map(fn listing_url ->
+      # Step 1: Scrape listing page
+      {:ok, job_summaries} = scraper_module.scrape_listing_page(listing_url)
+      
+      if metadata.requires_detail_page do
+        # Step 2: Scrape each detail page (if needed)
+        Enum.map(job_summaries, fn summary ->
+          {:ok, full_job} = scraper_module.scrape_detail_page(summary.detail_url)
+          
+          # Merge summary + detail data
+          Map.merge(summary, full_job)
+        end)
+      else
+        # Listing page had everything we need
+        job_summaries
+      end
+    end)
+    |> Enum.map(fn raw_job ->
+      # Step 3: Normalize to our schema
+      {:ok, normalized} = scraper_module.normalize_job(raw_job)
+      normalized
+    end)
   end
 end
 ```
@@ -813,6 +1011,107 @@ iex> %JobPosting{title: "Test"} |> Repo.insert()
 6. **Use behaviours** - Define module contracts for extensibility
 7. **Prefer Req, Jido, Oban** - Modern Elixir libraries
 8. **Iterate** - Small steps, continuous validation
+
+---
+
+## Common Pitfalls to Avoid
+
+### ❌ PITFALL #1: Confusing Listing Pages with Detail Pages
+
+**Problem:** Using selectors meant for a listing page on a detail page (or vice versa).
+
+```elixir
+# ❌ WRONG: Using listing page selector on detail page
+detail_url = "https://www.pnet.co.za/jobs/12345"
+{:ok, response} = Req.get(detail_url)
+doc = Floki.parse_document!(response.body)
+
+# This won't work! Detail pages don't have .job-result-card
+jobs = Floki.find(doc, ".job-result-card")  # Returns []
+
+# ✅ CORRECT: Use appropriate selectors for each page type
+defmodule PNetScraper do
+  def scrape_listing_page(url) do
+    # Listing page shows MULTIPLE jobs
+    Floki.find(doc, ".job-result-card")  # ✓
+  end
+  
+  def scrape_detail_page(url) do
+    # Detail page shows ONE job
+    Floki.find(doc, ".job-details-container")  # ✓
+  end
+end
+```
+
+**How to avoid:**
+1. Always check URL pattern first (does it have an ID?)
+2. Manually inspect the page in browser
+3. Test selectors in IEx before writing code
+4. Name functions clearly: `scrape_listing_page` vs `scrape_detail_page`
+
+### ❌ PITFALL #2: Scraping Detail Pages When Listing Has All Data
+
+**Problem:** Making unnecessary HTTP requests when listing page has complete info.
+
+```elixir
+# ❌ INEFFICIENT: Visiting detail page when not needed
+def scrape_all_jobs do
+  {:ok, summaries} = scrape_listing_page(url)
+  
+  # Unnecessary if listing has full description!
+  Enum.map(summaries, fn summary ->
+    scrape_detail_page(summary.detail_url)  # Extra HTTP call
+  end)
+end
+
+# ✅ EFFICIENT: Check metadata first
+def scrape_all_jobs(scraper_module) do
+  metadata = scraper_module.metadata()
+  {:ok, summaries} = scraper_module.scrape_listing_page(url)
+  
+  if metadata.requires_detail_page do
+    # Only scrape detail pages if needed
+    Enum.map(summaries, &scraper_module.scrape_detail_page(&1.detail_url))
+  else
+    summaries  # Listing page had everything
+  end
+end
+```
+
+### ❌ PITFALL #3: Hardcoding URLs Instead of Using URL Patterns
+
+**Problem:** Scraping only one page instead of paginating through all results.
+
+```elixir
+# ❌ WRONG: Only scrapes first page
+def scrape_jobs do
+  scrape_listing_page("https://www.pnet.co.za/jobs")  # Only page 1!
+end
+
+# ✅ CORRECT: Generate all listing URLs
+def scrape_all_jobs do
+  1..10
+  |> Enum.map(fn page ->
+    "https://www.pnet.co.za/jobs?page=#{page}"  # All pages
+  end)
+  |> Enum.flat_map(&scrape_listing_page/1)
+end
+```
+
+---
+
+## Quick Reference: Listing vs Detail Pages
+
+| Aspect | Listing Page | Detail Page |
+|--------|--------------|-------------|
+| **Shows** | Multiple jobs (10-50) | One job |
+| **URL Pattern** | `/jobs`, `/jobs?category=it` | `/jobs/12345`, `/jobs/senior-dev` |
+| **Contains** | Summary info | Full information |
+| **Typical Fields** | Title, company, location | + Description, requirements, salary |
+| **Selector Example** | `.job-result-card` | `.job-details-container` |
+| **Pagination** | Yes (page 1, 2, 3...) | No |
+| **Function Name** | `scrape_listing_page/1` | `scrape_detail_page/1` |
+| **Returns** | List of jobs | Single job |
 
 ---
 
