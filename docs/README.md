@@ -96,10 +96,24 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 - **Standard library choices** (Req, Oban/Oban Pro)
 - **IEx-first workflow** (REPL before UI)
 - **Behaviour-based architecture** (JobBoard behaviour)
+- **URL-based auto-routing** (paste any URL, system picks scraper)
 - **Iterative development** (manual → test → automate)
 - Code organization patterns
 - Testing philosophy
 - Migration strategies
+
+### 🏗️ [07 - Scraper Architecture](./07-scraper-architecture.md)
+
+**Quick reference** for the URL-based scraper routing system.
+
+**Key Topics:**
+
+- **Visual architecture diagram**
+- **When to use direct calls vs auto-routing**
+- **Component breakdown** (Behaviour, Registry, Scraper)
+- **Development checklist** for new scrapers
+- **Example IEx session** walkthrough
+- **Quick reference table**
 
 ## Quick Start Guide
 
@@ -107,10 +121,12 @@ If you're new to the project, we recommend reading in this order:
 
 1. **[Glossary](./00-glossary.md)** - Learn key terminology (reference as needed)
 2. **[Project Overview](./01-project-overview.md)** - Understand the "why"
-3. **[Next Steps](./04-next-steps.md)** - See the roadmap
-4. **[Job Posting Standards](./02-job-posting-standards.md)** - Learn the data model
-5. **[Deduplication Strategy](./03-deduplication-strategy.md)** - Understand the core challenge
-6. **[Workflow Orchestration](./05-workflow-orchestration.md)** - See how it all works together
+3. **[Development Practices](./06-development-practices.md)** - See how we build (IEx-first!)
+4. **[Scraper Architecture](./07-scraper-architecture.md)** - Quick reference for scraping
+5. **[Job Posting Standards](./02-job-posting-standards.md)** - Learn the data model
+6. **[Deduplication Strategy](./03-deduplication-strategy.md)** - Understand the core challenge
+7. **[Workflow Orchestration](./05-workflow-orchestration.md)** - See background job architecture
+8. **[Next Steps](./04-next-steps.md)** - Detailed implementation roadmap
 
 ## Current Phase
 

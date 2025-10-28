@@ -61,6 +61,17 @@ The origin of scraped data - typically a job board or website.
 
 **Database field:** `source_name` (e.g., "pnet", "linkedin")
 
+### Scraper
+A module that implements scraping logic for a specific job board.
+
+**Examples:** `PNetScraper`, `LinkedInScraper`, `CareerJunctionScraper`
+
+**Two ways to use:**
+1. **Direct call:** `PNetScraper.scrape_listing_page(url)` - When you know which scraper
+2. **Auto-routing:** `Scraper.scrape_url(url)` - System detects which scraper based on URL
+
+**Behaviour:** All scrapers implement `JobBoardBehaviour`
+
 ---
 
 ## Deduplication Concepts

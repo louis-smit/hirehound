@@ -389,6 +389,12 @@ defmodule Hirehound.Scrapers.JobBoardBehaviour do
   Most scrapers use a two-stage process:
   1. Scrape listing pages to get job URLs/IDs
   2. Scrape detail pages for full job data
+  
+  ## URL-Based Routing
+  
+  Scrapers declare which URLs they handle via `url_patterns/0`.
+  This enables automatic routing: just call `Scraper.scrape_url(any_url)`
+  and the system figures out which scraper to use!
   """
   
   @doc """
@@ -400,6 +406,35 @@ defmodule Hirehound.Scrapers.JobBoardBehaviour do
     rate_limit: integer(),
     scraping_frequency: atom(),  # :hourly, :daily, etc.
     requires_detail_page: boolean()  # true if must visit detail page for full data
+  }
+  
+  @doc """
+  Returns URL patterns this scraper handles.
+  
+  Enables auto-routing: `Scraper.scrape_url(url)` uses this to determine
+  which scraper to call.
+  
+  ## Returns
+  
+  A map with:
+  - `domains` - List of domains this scraper handles (without www)
+  - `listing_path_pattern` - Regex matching listing page paths
+  - `detail_path_pattern` - Regex matching detail page paths
+  
+  ## Example
+  
+      def url_patterns do
+        %{
+          domains: ["pnet.co.za"],
+          listing_path_pattern: ~r{^/jobs/?(\?.*)?$},
+          detail_path_pattern: ~r{^/jobs/\d+}
+        }
+      end
+  """
+  @callback url_patterns() :: %{
+    domains: list(String.t()),
+    listing_path_pattern: Regex.t(),
+    detail_path_pattern: Regex.t()
   }
   
   @doc """
@@ -470,6 +505,15 @@ defmodule Hirehound.Scrapers.PNetScraper do
       rate_limit: 100,  # requests per minute
       scraping_frequency: :hourly,
       requires_detail_page: true  # Must visit detail page for full description
+    }
+  end
+  
+  @impl true
+  def url_patterns do
+    %{
+      domains: ["pnet.co.za"],  # Handles pnet.co.za and www.pnet.co.za
+      listing_path_pattern: ~r{^/jobs/?(\?.*)?$},  # /jobs or /jobs?category=it&page=2
+      detail_path_pattern: ~r{^/jobs/\d+}          # /jobs/12345
     }
   end
   
@@ -658,6 +702,745 @@ defmodule Hirehound.Scrapers.Orchestrator do
 end
 ```
 
+---
+
+## URL-Based Auto-Routing Architecture
+
+### The Vision: Just Paste Any URL
+
+Instead of manually selecting which scraper to use, the system **auto-detects** based on the URL:
+
+```elixir
+# ❌ OLD WAY: Manual routing
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+
+# ✅ NEW WAY: Auto-routing (also supports old way!)
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+# System detects: "pnet.co.za" → PNetScraper → listing page → scrape
+```
+
+**Both patterns work!** Auto-routing is **additive**, not replacing.
+
+### Layered Architecture
+
+```
+                                    ┌─────────────────────────────────┐
+                                    │  IEx / Production / UI Code     │
+                                    └─────────────────────────────────┘
+                                              │         │
+                                              │         │
+                              Direct Call ────┘         └──── Auto-Route
+                              (explicit)                     (convenient)
+                                    │                           │
+                                    │                           ↓
+                                    │         ┌─────────────────────────────────┐
+                                    │         │  Scraper.scrape_url/1           │
+                                    │         │  (Auto-routing wrapper)         │
+                                    │         └─────────────────────────────────┘
+                                    │                           │
+                                    │                           ↓
+                                    │         ┌─────────────────────────────────┐
+                                    │         │  Registry.lookup(url)           │
+                                    │         │  "pnet.co.za" → PNetScraper     │
+                                    │         │  "/jobs" → :listing             │
+                                    │         └─────────────────────────────────┘
+                                    │                           │
+                                    └───────────────────────────┘
+                                                  │
+                                                  ↓
+                    ┌─────────────────────────────────────────────────────────┐
+                    │         PNetScraper (implements JobBoardBehaviour)      │
+                    ├─────────────────────────────────────────────────────────┤
+                    │  - url_patterns()           (domain mapping)            │
+                    │  - scrape_listing_page()    (scrapes MULTIPLE jobs)     │
+                    │  - scrape_detail_page()     (scrapes ONE job)           │
+                    │  - normalize_job()          (to unified schema)         │
+                    └─────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** Both paths end up calling the same underlying scraper functions!
+
+### Implementation: Scraper Registry
+
+```elixir
+# lib/hirehound/scrapers/registry.ex
+defmodule Hirehound.Scrapers.Registry do
+  @moduledoc """
+  Registry that maps URLs to scraper modules.
+  
+  On startup, builds a lookup table from all scraper URL patterns.
+  Used by `Scraper.scrape_url/1` for auto-routing.
+  """
+  
+  use GenServer
+  
+  # List all scraper modules
+  @scrapers [
+    Hirehound.Scrapers.PNetScraper,
+    Hirehound.Scrapers.LinkedInScraper,
+    Hirehound.Scrapers.CareerJunctionScraper
+  ]
+  
+  ## Client API
+  
+  def start_link(_opts) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+  
+  @doc """
+  Looks up which scraper handles the given URL.
+  
+  Returns `{:ok, scraper_module, page_type}` or `{:error, reason}`.
+  
+  ## Examples
+  
+      iex> Registry.lookup("https://pnet.co.za/jobs")
+      {:ok, Hirehound.Scrapers.PNetScraper, :listing}
+      
+      iex> Registry.lookup("https://pnet.co.za/jobs/12345")
+      {:ok, Hirehound.Scrapers.PNetScraper, :detail}
+      
+      iex> Registry.lookup("https://unknown-site.com/jobs")
+      {:error, :unknown_job_board}
+  """
+  def lookup(url) when is_binary(url) do
+    uri = URI.parse(url)
+    domain = normalize_domain(uri.host)
+    
+    GenServer.call(__MODULE__, {:lookup, domain, uri.path})
+  end
+  
+  ## Server Callbacks
+  
+  @impl true
+  def init(_) do
+    # Build domain → scraper lookup table
+    registry = 
+      @scrapers
+      |> Enum.flat_map(fn scraper ->
+        patterns = scraper.url_patterns()
+        
+        Enum.map(patterns.domains, fn domain ->
+          {normalize_domain(domain), scraper}
+        end)
+      end)
+      |> Map.new()
+    
+    {:ok, registry}
+  end
+  
+  @impl true
+  def handle_call({:lookup, domain, path}, _from, registry) do
+    case Map.get(registry, domain) do
+      nil -> 
+        {:reply, {:error, :unknown_job_board}, registry}
+      
+      scraper_module ->
+        page_type = detect_page_type(scraper_module, path)
+        {:reply, {:ok, scraper_module, page_type}, registry}
+    end
+  end
+  
+  ## Private Helpers
+  
+  defp normalize_domain(nil), do: nil
+  defp normalize_domain(domain) do
+    domain
+    |> String.downcase()
+    |> String.replace_prefix("www.", "")
+  end
+  
+  defp detect_page_type(scraper_module, path) do
+    patterns = scraper_module.url_patterns()
+    
+    cond do
+      Regex.match?(patterns.detail_path_pattern, path) -> :detail
+      Regex.match?(patterns.listing_path_pattern, path) -> :listing
+      true -> :unknown
+    end
+  end
+end
+```
+
+### Implementation: Unified Scraper Interface
+
+```elixir
+# lib/hirehound/scraper.ex
+defmodule Hirehound.Scraper do
+  @moduledoc """
+  Unified interface for scraping any job board URL.
+  
+  Automatically routes to the correct scraper based on URL.
+  
+  ## Examples
+  
+      # Auto-detects PNet listing page
+      iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+      {:ok, [%{title: "...", ...}, ...]}
+      
+      # Auto-detects PNet detail page
+      iex> Scraper.scrape_url("https://pnet.co.za/jobs/12345")
+      {:ok, %{title: "...", description: "...", ...}}
+      
+      # Auto-detects LinkedIn
+      iex> Scraper.scrape_url("https://linkedin.com/jobs/view/98765")
+      {:ok, %{...}}
+      
+      # Debug which scraper would be used
+      iex> Scraper.which_scraper("https://pnet.co.za/jobs")
+      {:ok, Hirehound.Scrapers.PNetScraper, :listing}
+  
+  ## Direct Calls Still Work!
+  
+  You can still call scrapers directly when you know which one to use:
+  
+      iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+      {:ok, [...]}
+  
+  Auto-routing is just a convenience layer on top!
+  """
+  
+  alias Hirehound.Scrapers.Registry
+  
+  @doc """
+  Scrapes any job board URL.
+  
+  Automatically determines:
+  1. Which scraper to use (based on domain)
+  2. Whether it's a listing or detail page (based on path pattern)
+  3. Which function to call (`scrape_listing_page` or `scrape_detail_page`)
+  
+  Returns the same result as calling the scraper directly.
+  
+  ## Examples
+  
+      # Listing page
+      iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+      {:ok, [%{title: "Senior Developer", ...}, ...]}
+      
+      # Detail page
+      iex> Scraper.scrape_url("https://pnet.co.za/jobs/12345")
+      {:ok, %{title: "Senior Developer", description: "...", ...}}
+      
+      # Unknown job board
+      iex> Scraper.scrape_url("https://unknown-site.com/jobs")
+      {:error, "No scraper found for URL: https://unknown-site.com/jobs"}
+  """
+  def scrape_url(url) when is_binary(url) do
+    case Registry.lookup(url) do
+      {:ok, scraper_module, :listing} ->
+        # Delegate to scraper's listing function
+        scraper_module.scrape_listing_page(url)
+      
+      {:ok, scraper_module, :detail} ->
+        # Delegate to scraper's detail function
+        scraper_module.scrape_detail_page(url)
+      
+      {:ok, scraper_module, :unknown} ->
+        # Path didn't match patterns - try both
+        # (Useful for edge cases or new URL formats)
+        case scraper_module.scrape_listing_page(url) do
+          {:ok, []} -> scraper_module.scrape_detail_page(url)
+          result -> result
+        end
+      
+      {:error, :unknown_job_board} ->
+        {:error, "No scraper found for URL: #{url}"}
+    end
+  end
+  
+  @doc """
+  Returns which scraper would handle this URL (for debugging).
+  
+  Useful for:
+  - Debugging URL pattern matching
+  - Validating URLs before scraping
+  - Discovering which scraper handles a domain
+  
+  ## Examples
+  
+      iex> Scraper.which_scraper("https://pnet.co.za/jobs")
+      {:ok, Hirehound.Scrapers.PNetScraper, :listing}
+      
+      iex> Scraper.which_scraper("https://pnet.co.za/jobs/12345")
+      {:ok, Hirehound.Scrapers.PNetScraper, :detail}
+      
+      iex> Scraper.which_scraper("https://linkedin.com/jobs/view/98765")
+      {:ok, Hirehound.Scrapers.LinkedInScraper, :detail}
+      
+      iex> Scraper.which_scraper("https://unknown.com/jobs")
+      {:error, :unknown_job_board}
+  """
+  def which_scraper(url) when is_binary(url) do
+    Registry.lookup(url)
+  end
+  
+  @doc """
+  Lists all registered scrapers and their domains.
+  
+  Useful for seeing what job boards are supported.
+  
+  ## Example
+  
+      iex> Scraper.list_scrapers()
+      [
+        %{
+          module: Hirehound.Scrapers.PNetScraper,
+          name: "PNet",
+          domains: ["pnet.co.za"]
+        },
+        %{
+          module: Hirehound.Scrapers.LinkedInScraper,
+          name: "LinkedIn",
+          domains: ["linkedin.com"]
+        }
+      ]
+  """
+  def list_scrapers do
+    # Get all scraper modules from Registry
+    Application.get_env(:hirehound, :scrapers, [])
+    |> Enum.map(fn scraper ->
+      metadata = scraper.metadata()
+      patterns = scraper.url_patterns()
+      
+      %{
+        module: scraper,
+        name: metadata.name,
+        domains: patterns.domains
+      }
+    end)
+  end
+end
+```
+
+### Adding to Supervision Tree
+
+```elixir
+# lib/hirehound/application.ex
+defmodule Hirehound.Application do
+  use Application
+  
+  def start(_type, _args) do
+    children = [
+      Hirehound.Repo,
+      # Add Registry to supervision tree
+      Hirehound.Scrapers.Registry,
+      # ... other workers
+    ]
+    
+    opts = [strategy: :one_for_one, name: Hirehound.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+end
+```
+
+### Usage: Both Patterns Work
+
+#### Pattern 1: Direct Calls (Explicit)
+
+**When to use:**
+- ✅ In production code where you know the scraper
+- ✅ In tests (explicit, no magic)
+- ✅ When you want specific scraper behavior
+- ✅ For performance (no lookup overhead)
+- ✅ When debugging specific scraper logic
+
+```elixir
+# Production worker - explicit and clear
+defmodule Hirehound.Workers.ScrapingWorker do
+  def perform(%{args: %{"source" => "pnet", "url" => url}}) do
+    # Direct call - no ambiguity
+    PNetScraper.scrape_listing_page(url)
+  end
+end
+
+# Tests - explicit about what you're testing
+test "PNet scraper handles pagination" do
+  use_cassette "pnet_jobs_page_2" do
+    assert {:ok, jobs} = PNetScraper.scrape_listing_page(url)
+    assert length(jobs) == 20
+  end
+end
+
+# IEx - when you know exactly what you want
+iex> alias Hirehound.Scrapers.PNetScraper
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+{:ok, [...]}
+```
+
+#### Pattern 2: Auto-Routing (Convenient)
+
+**When to use:**
+- ✅ In IEx exploration (just paste URLs!)
+- ✅ When building "paste any job URL" UI features
+- ✅ When crawling/discovering URLs (don't know source upfront)
+- ✅ For quick prototyping
+- ✅ When source is dynamic (user input, discovered links)
+
+```elixir
+# IEx exploration - just paste any URL!
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+{:ok, [...]}
+
+iex> Scraper.scrape_url("https://linkedin.com/jobs/view/12345")
+{:ok, %{...}}
+
+# UI feature - "Import job from URL"
+def import_job_from_url(user_provided_url) do
+  # Don't know which scraper - let system figure it out
+  case Scraper.scrape_url(user_provided_url) do
+    {:ok, job_data} -> 
+      Jobs.create_posting(job_data)
+    
+    {:error, reason} ->
+      {:error, "Could not scrape URL: #{reason}"}
+  end
+end
+
+# Crawling - following discovered links
+def follow_links(html, base_url) do
+  html
+  |> extract_job_urls()
+  |> Enum.map(fn url ->
+    # Auto-routes to correct scraper!
+    Scraper.scrape_url(url)
+  end)
+end
+
+# Debugging - which scraper handles this?
+iex> Scraper.which_scraper("https://some-new-site.com/jobs/123")
+{:error, :unknown_job_board}  # Not supported yet
+
+iex> Scraper.which_scraper("https://pnet.co.za/jobs")
+{:ok, Hirehound.Scrapers.PNetScraper, :listing}  # ✓
+```
+
+### IEx Workflow with Auto-Routing
+
+```elixir
+# Start app
+$ iex -S mix
+
+# Just paste ANY URL you find!
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+{:ok, [%{title: "Senior Dev", ...}, ...]}
+
+# Try a detail page
+iex> Scraper.scrape_url("https://pnet.co.za/jobs/12345")
+{:ok, %{title: "Senior Dev", description: "...", ...}}
+
+# Try different job board
+iex> Scraper.scrape_url("https://linkedin.com/jobs/search?q=developer")
+{:ok, [...]}
+
+# Check which scraper would handle it
+iex> Scraper.which_scraper("https://pnet.co.za/jobs/abc123")
+{:ok, Hirehound.Scrapers.PNetScraper, :detail}
+
+# Still works the old way too!
+iex> alias Hirehound.Scrapers.PNetScraper
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+{:ok, [...]}
+
+# List all supported job boards
+iex> Scraper.list_scrapers()
+[
+  %{module: PNetScraper, name: "PNet", domains: ["pnet.co.za"]},
+  %{module: LinkedInScraper, name: "LinkedIn", domains: ["linkedin.com"]},
+  ...
+]
+```
+
+### Testing Both Patterns
+
+```elixir
+# test/hirehound/scrapers/pnet_scraper_test.exs
+defmodule Hirehound.Scrapers.PNetScraperTest do
+  use Hirehound.DataCase
+  use ExVCR.Mock, adapter: ExVCR.Adapter.Finch
+  
+  alias Hirehound.Scrapers.PNetScraper
+  
+  describe "scrape_listing_page/1 (direct call)" do
+    test "extracts job titles from listing page" do
+      use_cassette "pnet_listing_page" do
+        url = "https://pnet.co.za/jobs"
+        
+        assert {:ok, jobs} = PNetScraper.scrape_listing_page(url)
+        assert length(jobs) > 0
+        assert Enum.all?(jobs, & &1.title)
+      end
+    end
+  end
+  
+  describe "url_patterns/0" do
+    test "declares correct domain patterns" do
+      patterns = PNetScraper.url_patterns()
+      
+      assert "pnet.co.za" in patterns.domains
+      assert Regex.match?(patterns.listing_path_pattern, "/jobs")
+      assert Regex.match?(patterns.listing_path_pattern, "/jobs?page=2")
+      assert Regex.match?(patterns.detail_path_pattern, "/jobs/12345")
+    end
+  end
+end
+
+# test/hirehound/scraper_test.exs
+defmodule Hirehound.ScraperTest do
+  use Hirehound.DataCase
+  use ExVCR.Mock, adapter: ExVCR.Adapter.Finch
+  
+  alias Hirehound.Scraper
+  alias Hirehound.Scrapers.PNetScraper
+  
+  describe "scrape_url/1 (auto-routing)" do
+    test "routes PNet listing URLs correctly" do
+      use_cassette "pnet_listing_page" do
+        url = "https://pnet.co.za/jobs"
+        
+        assert {:ok, jobs} = Scraper.scrape_url(url)
+        assert length(jobs) > 0
+      end
+    end
+    
+    test "routes PNet detail URLs correctly" do
+      use_cassette "pnet_detail_page" do
+        url = "https://pnet.co.za/jobs/12345"
+        
+        assert {:ok, job} = Scraper.scrape_url(url)
+        assert job.title
+        assert job.description
+      end
+    end
+    
+    test "returns error for unknown job boards" do
+      url = "https://unknown-site.com/jobs"
+      
+      assert {:error, msg} = Scraper.scrape_url(url)
+      assert msg =~ "No scraper found"
+    end
+  end
+  
+  describe "which_scraper/1" do
+    test "identifies correct scraper for PNet URLs" do
+      assert {:ok, PNetScraper, :listing} = 
+        Scraper.which_scraper("https://pnet.co.za/jobs")
+      
+      assert {:ok, PNetScraper, :detail} = 
+        Scraper.which_scraper("https://pnet.co.za/jobs/12345")
+    end
+    
+    test "handles www prefix" do
+      assert {:ok, PNetScraper, :listing} = 
+        Scraper.which_scraper("https://www.pnet.co.za/jobs")
+    end
+    
+    test "returns error for unknown domains" do
+      assert {:error, :unknown_job_board} = 
+        Scraper.which_scraper("https://unknown.com/jobs")
+    end
+  end
+end
+```
+
+### Benefits of This Architecture
+
+✅ **Incredible IEx ergonomics** - Just paste any URL and it works!  
+✅ **No manual routing** - System figures out which scraper to use  
+✅ **Perfect for exploration** - Try any URL instantly in REPL  
+✅ **Great for UI features** - "Paste any job URL" import functionality  
+✅ **Crawling-friendly** - Discover URLs, system auto-routes them  
+✅ **Self-documenting** - `which_scraper/1` shows what would happen  
+✅ **Type safety** - Behaviour enforces `url_patterns/0` callback  
+✅ **Direct calls still work** - Not replacing anything, just adding convenience  
+✅ **Testable** - Can test auto-routing separately from scraper logic  
+✅ **Debuggable** - `which_scraper/1` helps debug URL pattern issues
+
+### Trade-offs & Considerations
+
+⚠️ **URL normalization** - Must handle http vs https, www vs non-www, trailing slashes  
+⚠️ **Ambiguous paths** - Some URLs might not clearly match listing or detail patterns  
+⚠️ **Subdomain complexity** - careers.company.com vs company.com (add both to domains)  
+⚠️ **Pattern maintenance** - URL patterns may change when sites redesign  
+⚠️ **Startup overhead** - Registry builds lookup table at startup (minimal, but exists)
+
+**Solutions:**
+- Normalize domains consistently (remove www, lowercase)
+- Add fallback logic for ambiguous paths (try listing first, then detail)
+- Document URL patterns in scraper tests
+- Use `which_scraper/1` to debug pattern matching issues
+
+### Real-World Example: Building PNet Scraper
+
+Here's the complete journey from IEx exploration to auto-routing:
+
+```elixir
+# ========================================
+# STEP 1: Explore in IEx (no code yet!)
+# ========================================
+$ iex -S mix
+
+# Try auto-routing first (even before implementing!)
+iex> Scraper.which_scraper("https://pnet.co.za/jobs")
+{:error, :unknown_job_board}  # Not implemented yet
+
+# Manually fetch and explore
+iex> url = "https://pnet.co.za/jobs"
+iex> {:ok, response} = Req.get(url)
+iex> html = response.body
+
+# Check: Is this listing or detail page?
+iex> doc = Floki.parse_document!(html)
+iex> job_cards = Floki.find(doc, ".job-result-card")
+iex> length(job_cards)
+25  # ✓ It's a listing page (multiple jobs)
+
+# Extract first job
+iex> first_job = List.first(job_cards)
+iex> title = Floki.find(first_job, ".job-title") |> Floki.text()
+"Senior Developer"  # ✓ Works!
+
+# Get detail URL
+iex> detail_url = Floki.find(first_job, "a") |> Floki.attribute("href") |> List.first()
+"/jobs/12345"
+
+# ========================================
+# STEP 2: Create the scraper module
+# ========================================
+
+# lib/hirehound/scrapers/pnet_scraper.ex
+defmodule Hirehound.Scrapers.PNetScraper do
+  @behaviour Hirehound.Scrapers.JobBoardBehaviour
+  
+  @impl true
+  def metadata do
+    %{
+      name: "PNet",
+      base_url: "https://www.pnet.co.za",
+      rate_limit: 100,
+      scraping_frequency: :hourly,
+      requires_detail_page: true
+    }
+  end
+  
+  @impl true
+  def url_patterns do
+    %{
+      domains: ["pnet.co.za"],
+      listing_path_pattern: ~r{^/jobs/?(\?.*)?$},
+      detail_path_pattern: ~r{^/jobs/\d+}
+    }
+  end
+  
+  @impl true
+  def scrape_listing_page(url) do
+    # Copy the working code from IEx
+    with {:ok, response} <- Req.get(url),
+         {:ok, doc} <- Floki.parse_document(response.body) do
+      
+      jobs = 
+        doc
+        |> Floki.find(".job-result-card")
+        |> Enum.map(&parse_job_card/1)
+      
+      {:ok, jobs}
+    end
+  end
+  
+  defp parse_job_card(card) do
+    %{
+      title: Floki.find(card, ".job-title") |> Floki.text(),
+      company: Floki.find(card, ".company") |> Floki.text(),
+      location: Floki.find(card, ".location") |> Floki.text(),
+      detail_url: Floki.find(card, "a") |> Floki.attribute("href") |> List.first()
+    }
+  end
+  
+  # ... implement other callbacks
+end
+
+# ========================================
+# STEP 3: Test manually in IEx
+# ========================================
+$ iex -S mix
+
+# Test direct call
+iex> recompile()
+iex> alias Hirehound.Scrapers.PNetScraper
+iex> {:ok, jobs} = PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+{:ok, [%{title: "Senior Developer", ...}, ...]}  # ✓ Works!
+
+# Test auto-routing (now works because we added url_patterns!)
+iex> alias Hirehound.Scraper
+iex> Scraper.which_scraper("https://pnet.co.za/jobs")
+{:ok, Hirehound.Scrapers.PNetScraper, :listing}  # ✓ Detected!
+
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+{:ok, [%{title: "Senior Developer", ...}, ...]}  # ✓ Auto-routed and worked!
+
+# ========================================
+# STEP 4: Write tests
+# ========================================
+
+# test/hirehound/scrapers/pnet_scraper_test.exs
+defmodule Hirehound.Scrapers.PNetScraperTest do
+  use Hirehound.DataCase
+  use ExVCR.Mock
+  
+  alias Hirehound.Scrapers.PNetScraper
+  alias Hirehound.Scraper
+  
+  test "direct call: scrape_listing_page/1" do
+    use_cassette "pnet_listing" do
+      {:ok, jobs} = PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+      assert length(jobs) > 0
+    end
+  end
+  
+  test "auto-routing: Scraper.scrape_url/1" do
+    use_cassette "pnet_listing" do
+      {:ok, jobs} = Scraper.scrape_url("https://pnet.co.za/jobs")
+      assert length(jobs) > 0
+    end
+  end
+  
+  test "url pattern detection" do
+    assert {:ok, PNetScraper, :listing} = 
+      Scraper.which_scraper("https://pnet.co.za/jobs")
+    
+    assert {:ok, PNetScraper, :detail} = 
+      Scraper.which_scraper("https://pnet.co.za/jobs/12345")
+  end
+end
+
+# ========================================
+# STEP 5: Use it anywhere!
+# ========================================
+
+# Production - explicit
+defmodule ScrapingWorker do
+  def perform(%{args: %{"url" => url}}) do
+    PNetScraper.scrape_listing_page(url)
+  end
+end
+
+# UI - auto-routing
+def handle_event("import_url", %{"url" => url}, socket) do
+  case Scraper.scrape_url(url) do
+    {:ok, jobs} -> {:noreply, assign(socket, :jobs, jobs)}
+    {:error, _} -> {:noreply, put_flash(socket, :error, "Invalid URL")}
+  end
+end
+
+# IEx - both work!
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")  # Direct
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")               # Auto
+```
+
+**Result:** Maximum flexibility! Use direct calls when you want control, auto-routing when you want convenience.
+
+---
+
 ### Using Behaviours Polymorphically
 
 Now you can work with any job board generically (each module implements the same behaviour):
@@ -818,32 +1601,83 @@ Create `.iex.exs` in project root for automatic imports:
 # .iex.exs
 import Ecto.Query
 alias Hirehound.Repo
-alias Hirehound.{Jobs, Organizations, Scrapers}
+alias Hirehound.{Jobs, Organizations, Scraper}
 alias Hirehound.Jobs.JobPosting
 alias Hirehound.Organizations.Organization
 
+# Import specific scrapers for direct use
+alias Hirehound.Scrapers.{
+  PNetScraper,
+  LinkedInScraper,
+  CareerJunctionScraper
+}
+
 # Helper functions
 defmodule H do
-  def scrape_pnet do
-    Hirehound.Scrapers.PNetScraper.scrape_page("https://www.pnet.co.za/jobs")
+  @doc """
+  Quick scrape using auto-routing.
+  Just paste any job board URL!
+  """
+  def scrape(url) do
+    Scraper.scrape_url(url)
   end
   
+  @doc "Check which scraper handles a URL"
+  def which(url) do
+    Scraper.which_scraper(url)
+  end
+  
+  @doc "List all supported job boards"
+  def scrapers do
+    Scraper.list_scrapers()
+  end
+  
+  @doc "Quick PNet scrape (direct call)"
+  def pnet do
+    PNetScraper.scrape_listing_page("https://www.pnet.co.za/jobs")
+  end
+  
+  @doc "Reset database (dev only!)"
   def reset_db do
     # Careful! Only in dev
     Ecto.Adapters.SQL.query!(Repo, "TRUNCATE job_postings CASCADE")
   end
 end
 
-IO.puts("Hirehound IEx loaded. Try: H.scrape_pnet()")
+IO.puts """
+
+Hirehound IEx loaded! 🐕
+
+Quick commands:
+  H.scrape(url)     - Auto-scrape any URL
+  H.which(url)      - Check which scraper handles URL
+  H.scrapers()      - List all scrapers
+  H.pnet()          - Quick PNet scrape
+  
+Examples:
+  iex> H.scrape("https://pnet.co.za/jobs")
+  iex> H.which("https://pnet.co.za/jobs/12345")
+  iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+"""
 ```
 
-Now when you start IEx, everything is pre-loaded:
+Now when you start IEx, everything is pre-loaded with helpful commands:
 
 ```elixir
 $ iex -S mix
-Hirehound IEx loaded. Try: H.scrape_pnet()
+Hirehound IEx loaded! 🐕
 
-iex> H.scrape_pnet()
+Quick commands:
+  H.scrape(url)     - Auto-scrape any URL
+  H.which(url)      - Check which scraper handles URL
+  ...
+
+# Auto-routing - super quick!
+iex> H.scrape("https://pnet.co.za/jobs")
+{:ok, [...]}
+
+# Or use direct calls when you want control
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
 {:ok, [...]}
 ```
 
@@ -1003,14 +1837,63 @@ iex> %JobPosting{title: "Test"} |> Repo.insert()
 
 ## Summary: The Hirehound Way
 
+### Development Workflow
+
 1. **Start in IEx** - Explore, experiment, validate
 2. **Codify** - Move working code into modules
 3. **Test manually** - Verify in IEx again
 4. **Write tests** - Lock in behavior
 5. **Automate** - Add to workers/cron only after confidence
 6. **Use behaviours** - Define module contracts for extensibility
-7. **Prefer Req, Jido, Oban** - Modern Elixir libraries
+7. **Prefer Req, Oban** - Modern Elixir libraries (NOT Jido for now)
 8. **Iterate** - Small steps, continuous validation
+
+### Architecture Patterns
+
+**Layered Design:**
+- ✅ **Layer 1:** Direct scraper calls (`PNetScraper.scrape_listing_page(url)`)
+  - Use in production, tests, when you know the scraper
+  - Explicit, fast, clear
+  
+- ✅ **Layer 2:** Auto-routing (`Scraper.scrape_url(url)`)
+  - Use in IEx, UI features, crawling
+  - Convenient, exploratory
+  - Just a thin routing layer - calls Layer 1 internally
+
+**Both patterns coexist!** Auto-routing is additive, not replacing direct calls.
+
+### Two Ways to Scrape
+
+```elixir
+# ✅ Direct call (when you know the scraper)
+iex> PNetScraper.scrape_listing_page("https://pnet.co.za/jobs")
+
+# ✅ Auto-routing (when you just have a URL)
+iex> Scraper.scrape_url("https://pnet.co.za/jobs")
+# Internally calls: PNetScraper.scrape_listing_page(url)
+```
+
+**Use the right tool for the job:**
+- Production code → Direct calls
+- IEx exploration → Auto-routing
+- Tests → Direct calls (explicit)
+- User input → Auto-routing (don't know source)
+- Crawling → Auto-routing (discovered URLs)
+
+### Quick Reference: When to Use Which Pattern
+
+| Scenario | Use | Example |
+|----------|-----|---------|
+| **IEx exploration** | `Scraper.scrape_url(url)` | `H.scrape("https://pnet.co.za/jobs")` |
+| **Production workers** | `PNetScraper.scrape_listing_page(url)` | Explicit, clear which scraper |
+| **Unit tests** | `PNetScraper.scrape_listing_page(url)` | Test specific scraper logic |
+| **Integration tests** | `Scraper.scrape_url(url)` | Test full routing system |
+| **User pastes URL in UI** | `Scraper.scrape_url(url)` | Don't know which board |
+| **Following discovered links** | `Scraper.scrape_url(url)` | URLs found while crawling |
+| **Scheduled scraping** | `PNetScraper.scrape_listing_page(url)` | Know the board/URL upfront |
+| **Debugging scraper** | `PNetScraper.scrape_listing_page(url)` | Isolate specific scraper |
+| **Debugging routing** | `Scraper.which_scraper(url)` | Check pattern matching |
+| **Quick prototype** | `Scraper.scrape_url(url)` | Fastest in IEx |
 
 ---
 
