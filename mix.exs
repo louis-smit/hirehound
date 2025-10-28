@@ -66,8 +66,9 @@ defmodule Hirehound.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
+      {:tidewave, "~> 0.5", only: :dev},
       {:oban, "~> 2.19"},
-      {:igniter, "~> 0.5", only: [:dev]},
+      {:igniter, "~> 0.5", only: [:dev]}
     ]
   end
 
