@@ -115,6 +115,20 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 - **Example IEx session** walkthrough
 - **Quick reference table**
 
+### 🚦 [08 - Implementation Plan](./08-implementation-plan.md)
+
+**Ready to start coding?** This is your step-by-step guide to get from zero to working scraper.
+
+**Key Topics:**
+
+- **Phase-by-phase tasks** with exact commands
+- **IEx-first examples** for each phase
+- Database schema generation
+- First scraper implementation
+- Integration and testing
+- **Immediate next steps** (this week)
+- Workflow options (autonomous vs collaborative)
+
 ## Quick Start Guide
 
 If you're new to the project, we recommend reading in this order:
