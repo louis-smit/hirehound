@@ -7,6 +7,12 @@
 # General application configuration
 import Config
 
+config :hirehound, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: [default: 10],
+  repo: Hirehound.Repo
+
 config :hirehound,
   ecto_repos: [Hirehound.Repo],
   generators: [timestamp_type: :utc_datetime]

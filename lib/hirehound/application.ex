@@ -11,6 +11,7 @@ defmodule Hirehound.Application do
       HirehoundWeb.Telemetry,
       Hirehound.Repo,
       {DNSCluster, query: Application.get_env(:hirehound, :dns_cluster_query) || :ignore},
+      {Oban, Application.fetch_env!(:hirehound, Oban)},
       {Phoenix.PubSub, name: Hirehound.PubSub},
       # Start a worker by calling: Hirehound.Worker.start_link(arg)
       # {Hirehound.Worker, arg},
