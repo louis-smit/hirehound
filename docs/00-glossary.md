@@ -72,7 +72,7 @@ A module that implements scraping logic for a specific job board.
 
 **Behaviour:** All scrapers implement `Hirehound.Scrapers.Behaviour`
 
-**Why "Scrapers.Behaviour" not "JobBoardBehaviour"?**
+**Why "Scrapers.Behaviour"
 - Specific to scraping (not publishing or syncing)
 - Leaves room for future: `Publishers.Behaviour`, `Sync.Behaviour`
 - Clear separation of concerns

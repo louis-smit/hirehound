@@ -47,7 +47,7 @@ See @docs/*.md
   - Each scraper implements `url_patterns/0` callback declaring which domains/paths it handles
   - Enables both direct calls (`PNetScraper.scrape_listing_page(url)`) AND auto-routing (`Scraper.scrape_url(url)`)
   - Direct calls for production/tests, auto-routing for IEx exploration and user input
-- **Naming:** Use `Scrapers.Behaviour` (not `JobBoardBehaviour`) to leave room for future `Publishers.Behaviour`, `Sync.Behaviour`
+- **Naming:** Use `Scrapers.Behaviour` to leave room for future `Publishers.Behaviour`, `Sync.Behaviour`
 
 ### Data Model
 

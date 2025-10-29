@@ -318,7 +318,7 @@ iex> H.scrape(url)
 **The architecture is layered and additive:**
 
 1. **Base layer:** Individual scrapers (`PNetScraper`, etc.)
-   - Implement `JobBoardBehaviour`
+   - Implement `Scrapers.Behaviour`
    - Always directly callable
    - Explicit, testable, fast
 

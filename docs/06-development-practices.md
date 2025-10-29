@@ -380,11 +380,11 @@ Hirehound.Workers.PNetScrapingWorker.new(%{})
 
 **For Hirehound scrapers:** We use **behaviours** because we have different modules (scrapers) implementing the same interface.
 
-### Why "Scrapers.Behaviour" and Not "JobBoardBehaviour"?
+### Why "Scrapers.Behaviour"
 
 **Important naming decision:**
 
-We use `Hirehound.Scrapers.Behaviour` instead of `JobBoardBehaviour` because:
+We use `Hirehound.Scrapers.Behaviour` because:
 
 1. **Scope-specific:** This behaviour is **only for scraping** (reading data)
 2. **Future-proof:** Leaves room for other job board interactions:
@@ -394,15 +394,6 @@ We use `Hirehound.Scrapers.Behaviour` instead of `JobBoardBehaviour` because:
 3. **Namespace clarity:** Already in `Scrapers` module, so context is obvious
 4. **Clean separation:** Each concern (scraping, publishing, syncing) gets its own behaviour
 
-**Bad naming (too generic):**
-```elixir
-defmodule Hirehound.JobBoardBehaviour do
-  # Too broad - what does this do with job boards?
-  # Scraping? Publishing? Syncing? Analytics?
-end
-```
-
-**Good naming (specific and extensible):**
 ```elixir
 # Clear - this is for scraping
 defmodule Hirehound.Scrapers.Behaviour do
@@ -431,17 +422,7 @@ defmodule Hirehound.Scrapers.Behaviour do
   Behaviour for job board scrapers.
   
   Each job board (PNet, LinkedIn, CareerJunction) implements this behaviour.
-  
-  ## Why "Behaviour" not "JobBoardBehaviour"?
-  
-  This behaviour is specifically for SCRAPING job boards. In the future,
-  we may add other behaviours for:
-  - `Publishers.Behaviour` - Posting jobs TO job boards
-  - `Sync.Behaviour` - Bidirectional syncing
-  
-  Keeping the name short and namespaced (`Scrapers.Behaviour`) makes the
-  purpose clear while leaving room for future job board interactions.
-  
+   
   ## IMPORTANT: Listing Pages vs Detail Pages
   
   Do NOT confuse:

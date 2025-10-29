@@ -5,7 +5,7 @@
 Should we use a crawling framework (Crawly, Hop) or build our own with Floki + Req?
 
 **Considerations:**
-- Already have JobBoardBehaviour design
+- Already have Scrapers.Behaviour design
 - Using Oban for orchestration
 - Expected scale: 20k-150k pages/day
 - Some sites may need JavaScript rendering
@@ -109,14 +109,14 @@ Storage
 
 **Cons:**
 - ❌ **Conflicts with our design**
-  - Has its own Spider behaviour (vs our JobBoardBehaviour)
+  - Has its own Spider behaviour (vs our Scrapers.Behaviour)
   - Has its own scheduling/orchestration (vs Oban)
   - Has its own pipeline system (vs our workflows)
 - ❌ Opinionated architecture doesn't match ours
 - ❌ Would need to adapt our design to fit Crawly
 - ❌ Heavier weight than needed
 
-**Verdict:** Too opinionated, conflicts with Oban + JobBoardBehaviour
+**Verdict:** Too opinionated, conflicts with Oban + Scrapers.Behaviour
 
 ---
 
@@ -212,7 +212,7 @@ defmodule Hirehound.Fetcher do
 end
 
 defmodule Hirehound.Scrapers.PNetScraper do
-  @behaviour JobBoardBehaviour
+  @behaviour Scrapers.Behaviour
   
   @impl true
   def scrape_listing_page(url) do
@@ -335,7 +335,7 @@ end
 
 # 6. Configure per job board
 defmodule LinkedInScraper do
-  @behaviour JobBoardBehaviour
+  @behaviour Scrapers.Behaviour
   
   @impl true
   def metadata do
@@ -426,7 +426,7 @@ end
 | **Middleware** | ❌ No | ❌ No | ✅ Yes | ❌ No |
 | **Pipelines** | ❌ No | ❌ No | ✅ Yes | ❌ No |
 | **JS rendering** | ❌ No | ❌ No | ✅ Optional | ✅ Native |
-| **Fits JobBoardBehaviour** | ✅ Perfect | ✅ Good | ❌ Conflicts | ✅ Perfect |
+| **Fits Scrapers.Behaviour** | ✅ Perfect | ✅ Good | ❌ Conflicts | ✅ Perfect |
 | **Fits Oban** | ✅ Perfect | ✅ Good | ⚠️ Overlaps | ✅ Perfect |
 | **Complexity** | Low | Low | High | Medium-High |
 | **Setup time** | Minutes | Minutes | Hours | 1-2 days |
@@ -448,7 +448,7 @@ Spider → Crawly Engine → Scheduler → Fetcher → Pipelines → Storage
 Owns orchestration, scheduling, storage
 
 Our Architecture:
-JobBoardBehaviour → Oban Workers → Workflows → PostgreSQL
+Scrapers.Behaviour → Oban Workers → Workflows → PostgreSQL
   ↓
 Oban owns orchestration, we own storage
 ```
@@ -457,7 +457,7 @@ Oban owns orchestration, we own storage
 1. **Duplicate orchestration** - Crawly schedules requests, Oban schedules jobs
 2. **Pipeline conflict** - Crawly has pipelines, we have Oban workflows
 3. **Storage conflict** - Crawly expects to own storage, we use Ecto
-4. **Behaviour mismatch** - Crawly's Spider behaviour ≠ our JobBoardBehaviour
+4. **Behaviour mismatch** - Crawly's Spider behaviour ≠ our Scrapers.Behaviour
 
 **Example of conflict:**
 ```elixir
@@ -475,7 +475,7 @@ end
 
 # We already designed this:
 defmodule PNetScraper do
-  @behaviour JobBoardBehaviour  # ← Our design
+  @behaviour Scrapers.Behaviour  # ← Our design
   
   def scrape_listing_page(url) do  # ← Our signature
     {:ok, [...]}
@@ -497,7 +497,7 @@ end
 
 **What we'd build ourselves anyway:**
 - Oban handles orchestration
-- JobBoardBehaviour handles parsing
+- Scrapers.Behaviour handles parsing
 - Our own Fetcher for rate limiting
 
 **Hop integration example:**
@@ -742,7 +742,7 @@ end
 
 ```elixir
 # Behaviour-based design (unchanged!)
-JobBoardBehaviour
+Scrapers.Behaviour
   ├─ url_patterns/0
   ├─ scrape_listing_page/1  ← Takes HTML, returns jobs
   └─ scrape_detail_page/1   ← Takes HTML, returns job
