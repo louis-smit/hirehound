@@ -1518,7 +1518,7 @@ end
 
 ## Step-by-Step Feature Development
 
-### Example: Building Organization Matching
+### Example: Building Company Matching
 
 **Step 1: IEx Exploration**
 
@@ -1531,9 +1531,9 @@ iex> name = raw_job.company
 iex> normalized = name |> String.downcase() |> String.replace(~r/\(pty\) ltd/, "")
 "google"
 
-# Test against existing orgs
-iex> alias Hirehound.Organizations
-iex> Organizations.find_by_name("google")
+# Test against existing companies
+iex> alias Hirehound.Companies
+iex> Companies.find_by_name("google")
 # Nil - not found, need fuzzy search
 
 # Try fuzzy matching
@@ -1547,8 +1547,8 @@ iex> String.jaro_distance("google", "Google")
 **Step 2: Create Helper Functions**
 
 ```elixir
-# lib/hirehound/organizations/name_matcher.ex
-defmodule Hirehound.Organizations.NameMatcher do
+# lib/hirehound/companies/name_matcher.ex
+defmodule Hirehound.Companies.NameMatcher do
   def normalize(name) do
     name
     |> String.downcase()
@@ -1564,9 +1564,9 @@ defmodule Hirehound.Organizations.NameMatcher do
     normalized = normalize(name)
     
     # Try exact match first
-    case Organizations.find_by_normalized_name(normalized) do
+    case Companies.find_by_normalized_name(normalized) do
       nil -> fuzzy_search(normalized)
-      org -> {:ok, org}
+      company -> {:ok, company}
     end
   end
 end
@@ -1576,12 +1576,12 @@ end
 
 ```elixir
 iex> recompile()
-iex> alias Hirehound.Organizations.NameMatcher
+iex> alias Hirehound.Companies.NameMatcher
 iex> NameMatcher.normalize("Google (Pty) Ltd")
 "google"
 
 iex> NameMatcher.find_match("Google (Pty) Ltd")
-{:ok, %Organization{name: "Google", ...}}
+{:ok, %Company{name: "Google", ...}}
 ```
 
 **Step 4: Write Tests**
@@ -1598,8 +1598,8 @@ end
 ```elixir
 defmodule Hirehound.Jobs.Ingestion do
   def process_raw_job(raw_job) do
-    with {:ok, org} <- NameMatcher.find_match(raw_job.company),
-         {:ok, job} <- create_job_posting(raw_job, org) do
+    with {:ok, company} <- NameMatcher.find_match(raw_job.company),
+         {:ok, job} <- create_job_posting(raw_job, company) do
       {:ok, job}
     end
   end
@@ -1618,13 +1618,13 @@ iex> recompile()
 
 # Import modules for easier access
 iex> import Ecto.Query
-iex> alias Hirehound.{Jobs, Organizations}
+iex> alias Hirehound.{Jobs, Companies}
 
 # Run a specific test
 iex> ExUnit.run_test("test/hirehound/scrapers/pnet_scraper_test.exs")
 
 # Inspect database state
-iex> Repo.all(Organization) |> length()
+iex> Repo.all(Company) |> length()
 iex> Repo.get(JobPosting, "some-uuid") |> IO.inspect()
 
 # Time function execution
@@ -1742,13 +1742,13 @@ lib/hirehound/
 │   ├── job_posting.ex  # Schema
 │   ├── ingestion.ex    # Processing pipeline
 │   └── queries.ex      # Ecto queries
-├── organizations/      # Organization domain
-│   ├── organization.ex
+├── companies/          # Company domain
+│   ├── company.ex
 │   ├── name_matcher.ex
 │   └── enrichment.ex
 ├── deduplication/      # Deduplication logic
 │   ├── job_matcher.ex
-│   └── org_matcher.ex
+│   └── company_matcher.ex
 └── workers/            # Background jobs
     ├── scraping_worker.ex
     └── deduplication_worker.ex

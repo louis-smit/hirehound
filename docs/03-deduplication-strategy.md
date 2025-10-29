@@ -11,7 +11,7 @@ The same job posting often appears on multiple job boards with variations in:
 - Posting dates (may differ by days)
 - Job IDs (each source has its own)
 
-### 2. Organization Deduplication
+### 2. Company Deduplication
 The same company appears with different names/spellings across sources:
 - "ABC Company (Pty) Ltd" vs "ABC Company" vs "ABC Co."
 - Subsidiaries and parent companies
@@ -130,13 +130,21 @@ Database Storage
 -- Main job postings table
 CREATE TABLE job_postings (
   id UUID PRIMARY KEY,
-  duplicate_cluster_id UUID,
+  job_duplicate_cluster_id UUID,
   is_canonical BOOLEAN DEFAULT false,
   -- ... other fields
 );
 
--- Duplicate clusters (groups of related job postings)
-CREATE TABLE duplicate_clusters (
+-- Main companies table
+CREATE TABLE companies (
+  id UUID PRIMARY KEY,
+  company_duplicate_cluster_id UUID,
+  is_canonical BOOLEAN DEFAULT false,
+  -- ... other fields
+);
+
+-- Job duplicate clusters (groups of related job postings)
+CREATE TABLE job_duplicate_clusters (
   id UUID PRIMARY KEY,
   canonical_job_id UUID REFERENCES job_postings(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -144,8 +152,17 @@ CREATE TABLE duplicate_clusters (
   confidence_score DECIMAL(3,2) -- 0.00 to 1.00
 );
 
--- Individual duplicate relationships
-CREATE TABLE duplicate_relationships (
+-- Company duplicate clusters (groups of related companies)
+CREATE TABLE company_duplicate_clusters (
+  id UUID PRIMARY KEY,
+  canonical_company_id UUID REFERENCES companies(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  member_count INTEGER DEFAULT 1,
+  confidence_score DECIMAL(3,2) -- 0.00 to 1.00
+);
+
+-- Individual job duplicate relationships
+CREATE TABLE job_duplicate_relationships (
   id UUID PRIMARY KEY,
   job_id_1 UUID REFERENCES job_postings(id),
   job_id_2 UUID REFERENCES job_postings(id),
@@ -155,8 +172,20 @@ CREATE TABLE duplicate_relationships (
   CONSTRAINT unique_pair UNIQUE(job_id_1, job_id_2)
 );
 
+-- Individual company duplicate relationships
+CREATE TABLE company_duplicate_relationships (
+  id UUID PRIMARY KEY,
+  company_id_1 UUID REFERENCES companies(id),
+  company_id_2 UUID REFERENCES companies(id),
+  similarity_score DECIMAL(3,2),
+  match_type VARCHAR(20), -- 'exact', 'near', 'fuzzy'
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT unique_pair UNIQUE(company_id_1, company_id_2)
+);
+
 -- Indexes for performance
-CREATE INDEX idx_cluster_id ON job_postings(duplicate_cluster_id);
+CREATE INDEX idx_job_cluster_id ON job_postings(job_duplicate_cluster_id);
+CREATE INDEX idx_company_cluster_id ON companies(company_duplicate_cluster_id);
 CREATE INDEX idx_combined_hash ON job_postings(combined_hash);
 CREATE INDEX idx_title_fingerprint ON job_postings USING gin(title_fingerprint);
 ```
@@ -383,26 +412,26 @@ end
 
 ---
 
-# Organization Deduplication
+# Company Deduplication
 
-Organization deduplication is equally critical and uses similar techniques but with organization-specific signals.
+Company deduplication is equally critical and uses similar techniques but with company-specific signals.
 
-## Organization Deduplication Pipeline
+## Company Deduplication Pipeline
 
 ### Stage 1: Exact Name Matching
 ```elixir
-defmodule Hirehound.Deduplication.OrgExactMatcher do
-  def find_exact_matches(org) do
-    normalized_name = normalize_org_name(org.name)
+defmodule Hirehound.Deduplication.CompanyExactMatcher do
+  def find_exact_matches(company) do
+    normalized_name = normalize_company_name(company.name)
     hash = :crypto.hash(:md5, normalized_name) |> Base.encode16()
     
-    Organization
-    |> where([o], o.name_hash == ^hash)
-    |> where([o], o.id != ^org.id)
+    Company
+    |> where([c], c.name_hash == ^hash)
+    |> where([c], c.id != ^company.id)
     |> Repo.all()
   end
   
-  defp normalize_org_name(name) do
+  defp normalize_company_name(name) do
     name
     |> String.downcase()
     |> remove_legal_entities()  # Remove "Pty Ltd", "Inc", etc.
@@ -428,25 +457,30 @@ end
 **Signal:** Organizations with the same website are almost certainly the same entity
 
 ```sql
--- Find organizations with matching domains
-SELECT o1.id, o2.id, o1.canonical_name, o2.canonical_name
-FROM organizations o1
-JOIN organizations o2 ON extract_domain(o1.website_url) = extract_domain(o2.website_url)
-WHERE o1.id < o2.id
-  AND o1.website_url IS NOT NULL
-  AND o2.website_url IS NOT NULL;
+-- Find companies with matching domains
+SELECT c1.id, c2.id, c1.name, c2.name
+FROM companies c1
+JOIN companies c2 ON extract_domain(c1.website_url) = extract_domain(c2.website_url)
+WHERE c1.id < c2.id
+  AND c1.website_url IS NOT NULL
+  AND c2.website_url IS NOT NULL;
 ```
 
 ### Stage 3: Registration Number Matching
 **Signal:** South African company registration numbers are unique
 
 ```elixir
-defmodule Hirehound.Deduplication.OrgRegistrationMatcher do
-  def find_by_registration(org) do
-    if org.registration_number do
-      Organization
-      |> where([o], o.registration_number == ^org.registration_number)
-      |> where([o], o.id != ^org.id)
+defmodule Hirehound.Deduplication.CompanyRegistrationMatcher do
+  def find_by_registration(company) do
+    # Load info data to get registration_number
+    company = Repo.preload(company, :info)
+    
+    if company.info && company.info.registration_number do
+      # Find companies with matching registration number
+      Company
+      |> join(:inner, [c], i in assoc(c, :info))
+      |> where([c, i], i.registration_number == ^company.info.registration_number)
+      |> where([c], c.id != ^company.id)
       |> Repo.all()
     else
       []
@@ -465,23 +499,23 @@ end
 5. **Contact Info** (10%) - Email/phone overlap
 
 ```elixir
-defmodule Hirehound.Deduplication.OrgFuzzyMatcher do
-  def calculate_similarity(org1, org2) do
+defmodule Hirehound.Deduplication.CompanyFuzzyMatcher do
+  def calculate_similarity(company1, company2) do
     %{
-      name_score: name_similarity(org1, org2) * 0.40,
-      location_score: location_match(org1, org2) * 0.20,
-      industry_score: industry_match(org1, org2) * 0.15,
-      website_score: website_similarity(org1, org2) * 0.15,
-      contact_score: contact_match(org1, org2) * 0.10
+      name_score: name_similarity(company1, company2) * 0.40,
+      location_score: location_match(company1, company2) * 0.20,
+      industry_score: industry_match(company1, company2) * 0.15,
+      website_score: website_similarity(company1, company2) * 0.15,
+      contact_score: contact_match(company1, company2) * 0.10
     }
     |> Map.values()
     |> Enum.sum()
   end
   
-  defp name_similarity(org1, org2) do
+  defp name_similarity(company1, company2) do
     # Try multiple algorithms, take max
-    levenshtein = String.jaro_distance(org1.canonical_name, org2.canonical_name)
-    token_overlap = token_jaccard_similarity(org1.canonical_name, org2.canonical_name)
+    levenshtein = String.jaro_distance(company1.name, company2.name)
+    token_overlap = token_jaccard_similarity(company1.name, company2.name)
     
     max(levenshtein, token_overlap)
   end
@@ -498,14 +532,14 @@ defmodule Hirehound.Deduplication.OrgFuzzyMatcher do
 end
 ```
 
-## Organization Alias Management
+## Company Alias Management
 
 Track known aliases and variations in a dedicated table:
 
 ```sql
-CREATE TABLE organization_aliases (
+CREATE TABLE company_aliases (
   id UUID PRIMARY KEY,
-  organization_id UUID REFERENCES organizations(id),
+  company_id UUID REFERENCES companies(id),
   alias_name VARCHAR(255) NOT NULL,
   alias_type VARCHAR(50), -- 'legal', 'trading', 'acronym', 'former', 'common_misspelling'
   is_primary BOOLEAN DEFAULT false,
@@ -514,18 +548,18 @@ CREATE TABLE organization_aliases (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_org_alias_name ON organization_aliases(alias_name);
-CREATE INDEX idx_org_alias_org_id ON organization_aliases(organization_id);
+CREATE INDEX idx_company_alias_name ON company_aliases(alias_name);
+CREATE INDEX idx_company_alias_company_id ON company_aliases(company_id);
 ```
 
 ### Alias Discovery Workflow
 
 ```elixir
-defmodule Hirehound.Workflows.OrgAliasDiscovery do
+defmodule Hirehound.Workflows.CompanyAliasDiscovery do
   use Oban.Pro.Workflow
   
-  def discover_aliases(org_id) do
-    org_id
+  def discover_aliases(company_id) do
+    company_id
     |> new_extract_from_jobs()      # Find variations in job postings
     |> new_linkedin_scrape()         # Get LinkedIn variations
     |> new_companies_house_lookup()  # Get official names from registry
@@ -534,7 +568,7 @@ defmodule Hirehound.Workflows.OrgAliasDiscovery do
 end
 ```
 
-## Organization Clustering
+## Company Clustering
 
 Similar to job clustering, but with additional complexity for company hierarchies:
 
@@ -548,15 +582,15 @@ Microsoft Corporation
 ```
 
 **Strategy:**
-- Don't merge parent/subsidiary into same organization
-- Track relationships in separate `organization_relationships` table
+- Don't merge parent/subsidiary into same company
+- Track relationships in separate `company_relationships` table
 - Use relationship type: parent, subsidiary, acquired, merged_into, formerly_known_as
 
 ```sql
-CREATE TABLE organization_relationships (
+CREATE TABLE company_relationships (
   id UUID PRIMARY KEY,
-  organization_id UUID REFERENCES organizations(id),
-  related_organization_id UUID REFERENCES organizations(id),
+  company_id UUID REFERENCES companies(id),
+  related_company_id UUID REFERENCES companies(id),
   relationship_type VARCHAR(50),
   confidence_score DECIMAL(3,2),
   effective_date DATE,
@@ -569,37 +603,37 @@ CREATE TABLE organization_relationships (
 
 All deduplication processes are orchestrated through sophisticated background job workflows (see [Workflow Orchestration](./05-workflow-orchestration.md)).
 
-### Organization Deduplication Workflow
+### Company Deduplication Workflow
 
 ```elixir
-defmodule Hirehound.Workflows.OrganizationDeduplication do
+defmodule Hirehound.Workflows.CompanyDeduplication do
   use Oban.Pro.Workflow
   
-  def deduplicate_organization(org_id) do
+  def deduplicate_company(company_id) do
     Workflow.new()
     # Stage 1: Quick exact checks
     |> Workflow.add(
         :exact_match,
-        Workers.OrgExactMatcher.new(%{org_id: org_id}),
+        Workers.CompanyExactMatcher.new(%{company_id: company_id}),
         queue: :deduplication
       )
     
     # Stage 2: Registration/domain checks (in parallel)
     |> Workflow.add(
         :registration_check,
-        Workers.OrgRegistrationMatcher.new(%{org_id: org_id}),
+        Workers.CompanyRegistrationMatcher.new(%{company_id: company_id}),
         queue: :deduplication
       )
     |> Workflow.add(
         :domain_check,
-        Workers.OrgDomainMatcher.new(%{org_id: org_id}),
+        Workers.CompanyDomainMatcher.new(%{company_id: company_id}),
         queue: :deduplication
       )
     
     # Stage 3: Fuzzy matching (only if no exact match)
     |> Workflow.add(
         :fuzzy_match,
-        Workers.OrgFuzzyMatcher.new(%{org_id: org_id}),
+        Workers.CompanyFuzzyMatcher.new(%{company_id: company_id}),
         deps: [:exact_match, :registration_check, :domain_check],
         queue: :deduplication,
         condition: fn results ->
@@ -611,7 +645,7 @@ defmodule Hirehound.Workflows.OrganizationDeduplication do
     # Stage 4: Clustering decision
     |> Workflow.add(
         :cluster,
-        Workers.OrgClustering.new(%{org_id: org_id}),
+        Workers.CompanyClustering.new(%{company_id: company_id}),
         deps: [:exact_match, :registration_check, :domain_check, :fuzzy_match],
         queue: :deduplication
       )
@@ -619,7 +653,7 @@ defmodule Hirehound.Workflows.OrganizationDeduplication do
     # Stage 5: Update related jobs
     |> Workflow.add(
         :update_jobs,
-        Workers.PropagateOrgChanges.new(%{org_id: org_id}),
+        Workers.PropagateCompanyChanges.new(%{company_id: company_id}),
         deps: [:cluster],
         queue: :processing
       )
@@ -694,26 +728,26 @@ end
 
 ```elixir
 defmodule Hirehound.Metrics.Deduplication do
-  def org_metrics do
+  def company_metrics do
     %{
-      # How many organizations in database
-      total_orgs: count_organizations(),
+      # How many companies in database
+      total_companies: count_companies(),
       
       # How many are in clusters
-      clustered_orgs: count_clustered_organizations(),
+      clustered_companies: count_clustered_companies(),
       
       # Average cluster size
-      avg_cluster_size: average_cluster_size(:organization),
+      avg_cluster_size: average_cluster_size(:company),
       
       # Largest cluster (may indicate over-clustering)
-      max_cluster_size: max_cluster_size(:organization),
+      max_cluster_size: max_cluster_size(:company),
       
-      # Organizations pending deduplication
-      pending_dedup: count_pending_dedup(:organization),
+      # Companies pending deduplication
+      pending_dedup: count_pending_dedup(:company),
       
       # Precision/recall (requires labeled test set)
-      precision: calculate_precision(:organization),
-      recall: calculate_recall(:organization)
+      precision: calculate_precision(:company),
+      recall: calculate_recall(:company)
     }
   end
   
@@ -733,7 +767,7 @@ end
 
 ### Alert Thresholds
 
-- ⚠️ Organization cluster size > 5 (may be over-clustering)
+- ⚠️ Company cluster size > 5 (may be over-clustering)
 - ⚠️ Job cluster size > 10 (may be over-clustering)
 - ⚠️ Dedup queue depth > 1000 (falling behind)
 - ⚠️ Dedup precision < 90% (too many false positives)
@@ -743,11 +777,11 @@ end
 
 Our comprehensive deduplication strategy:
 
-✅ **Dual entity deduplication** - Both jobs AND organizations
+✅ **Dual entity deduplication** - Both jobs AND companies
 ✅ **Multi-stage pipeline** - Exact → Near → Fuzzy for accuracy
 ✅ **Workflow orchestration** - Oban Pro manages complex pipelines (see [Workflow Orchestration](./05-workflow-orchestration.md))
 ✅ **Smart candidate generation** - Blocking prevents O(n²) comparisons
-✅ **Organization alias tracking** - Handle name variations
+✅ **Company alias tracking** - Handle name variations
 ✅ **Relationship modeling** - Track parent/subsidiary connections
 ✅ **Comprehensive monitoring** - Quality metrics and alerting
 ✅ **Background processing** - Asynchronous, scalable architecture
@@ -760,4 +794,4 @@ This architecture ensures high-quality deduplication across both entities while 
 - [MinHash for Duplicate Detection](https://en.wikipedia.org/wiki/MinHash)
 - [Locality-Sensitive Hashing](https://en.wikipedia.org/wiki/Locality-sensitive_hashing)
 - [Record Linkage Best Practices](https://recordlinkage.readthedocs.io/)
-- [Organization Entity Resolution](https://dl.acm.org/doi/10.1145/3318464.3389708)
+- [Company Entity Resolution](https://dl.acm.org/doi/10.1145/3318464.3389708)

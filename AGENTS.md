@@ -51,8 +51,8 @@ See @docs/*.md
 
 ### Data Model
 
-- **Organizations are first-class entities** - Separate table with own deduplication, not just fields on job postings
-- **Both jobs and organizations get deduplicated** using multi-stage pipelines (exact → near → fuzzy)
+- **Companies are first-class entities** - Separate table with own deduplication, not just fields on job postings
+- **Both jobs and companies get deduplicated** using multi-stage pipelines (exact → near → fuzzy)
 - **Use duplicate clusters** - Group duplicates with a canonical member
 - **Store raw data** - Always preserve original scraped data in JSONB `raw_data` field
 - **Track provenance** - Record which source(s) contributed to each entity

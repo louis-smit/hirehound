@@ -47,12 +47,12 @@ An individual job advertisement/vacancy scraped from a job board. Each posting i
 2. **Listing-only scraping:** If listing page has enough info, skip detail pages
 3. **Hybrid:** Get basics from listing, enrich from detail page if needed
 
-### Organization
-A company, employer, or hiring entity. Organizations are **first-class entities** in Hirehound with their own profiles, independent of job postings.
+### Company
+An employer or hiring entity. Companies are **first-class entities** in Hirehound with their own profiles, independent of job postings.
 
-**Example:** "Google South Africa (Pty) Ltd" is one organization that may have many job postings.
+**Example:** "Google South Africa (Pty) Ltd" is one company that may have many job postings.
 
-**Related terms:** Company, employer, hiring organization
+**Related terms:** Organization, employer, hiring company
 
 ### Source
 The origin of scraped data - typically a job board or website.
@@ -86,7 +86,7 @@ Multiple database records that represent the same real-world entity.
 
 **Job Posting Example:** Same job appearing on PNet, LinkedIn, and CareerJunction = 3 duplicate postings
 
-**Organization Example:** "ABC Company (Pty) Ltd", "ABC Company", "ABC Co." = 3 duplicate organization records
+**Company Example:** "ABC Company (Pty) Ltd", "ABC Company", "ABC Co." = 3 duplicate company records
 
 ### Cluster
 A **group of duplicate entities** linked together because they represent the same real-world thing.
@@ -163,7 +163,7 @@ A **performance optimization** technique that narrows down candidates for compar
 - Same province/city
 - Posted within 30 days
 
-**Organization blocking keys:**
+**Company blocking keys:**
 - Same first letter of name
 - Same province
 - Same industry
@@ -188,7 +188,7 @@ The process of **converting raw scraped data into a standardized format**.
 ### Enrichment
 **Adding additional data** to an entity from external sources or derived information.
 
-**Organization enrichment sources:**
+**Company enrichment sources:**
 - LinkedIn API (employee count, description)
 - Clearbit (company metadata)
 - Company registry (registration numbers)
@@ -215,7 +215,7 @@ The automated process of **extracting data from job board websites**.
 ### Vectorization / Embeddings
 Converting text into **numerical vectors** (arrays of numbers) that capture semantic meaning.
 
-**Purpose:** Enable semantic search - find similar jobs/organizations based on meaning, not just keywords
+**Purpose:** Enable semantic search - find similar jobs/companies based on meaning, not just keywords
 
 **Example:**
 ```
@@ -251,7 +251,7 @@ A **0-100 metric** indicating how complete and accurate an entity's data is.
 - Text quality (length, formatting)
 - No missing/null values
 
-**Factors for organizations:**
+**Factors for companies:**
 - Contact information present
 - External data enriched (LinkedIn, website)
 - Logo available
@@ -270,7 +270,7 @@ A **compact representation** of an entity used for fast similarity comparison.
 **Purpose:** Faster comparisons than full text comparison
 
 ### Alias
-An **alternative name or spelling** for an organization.
+An **alternative name or spelling** for a company.
 
 **Examples for "International Business Machines":**
 - Primary: "IBM"
@@ -283,7 +283,7 @@ An **alternative name or spelling** for an organization.
 - Former name
 - Common misspelling
 
-**Database:** `organization_aliases` table
+**Database:** `company_aliases` table
 
 ---
 
@@ -309,7 +309,7 @@ A **background job processor** that performs a specific task asynchronously.
 - `JobScraperWorker` - Scrapes a job board
 - `DeduplicationWorker` - Finds duplicates
 - `VectorizationWorker` - Generates embeddings
-- `OrganizationEnrichmentWorker` - Fetches external data
+- `CompanyEnrichmentWorker` - Fetches external data
 
 **Managed by:** Oban job queue system
 

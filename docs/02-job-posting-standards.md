@@ -99,27 +99,27 @@ Our schema should be a superset that can accommodate data from all sources while
 
 The system uses three primary entity types:
 
-1. **Organizations** - Companies/employers (deduplicated across sources)
-2. **Job Postings** - Individual job postings (linked to organizations)
+1. **Companies** - Employers/hiring organizations (deduplicated across sources)
+2. **Job Postings** - Individual job postings (linked to companies)
 3. **Duplicate Clusters** - Groups of equivalent entities
 
-## Organization Schema
+## Company Schema
 
-Organizations are **first-class entities** that exist independently of job postings. We build comprehensive organizational profiles by aggregating data from multiple sources.
+Companies are **first-class entities** that exist independently of job postings. We build comprehensive company profiles by aggregating data from multiple sources.
 
 **Design Philosophy:** Normalized structure with tables separated by update frequency and cardinality to minimize bloat, maximize query performance, and avoid excessive nullable columns.
 
-### Core Organizations Table
+### Core Companies Table
 **Purpose:** Minimal, stable identity data that changes infrequently
 
 ```
-organizations
+companies
 ├── Identity
 │   ├── id (UUID, primary key)
 │   ├── slug (URL-friendly identifier, unique)
 │   ├── name (canonical display name)
-│   ├── duplicate_cluster_id (FK to org clusters, nullable)
-│   └── is_canonical (boolean, primary org in cluster)
+│   ├── duplicate_cluster_id (FK to company clusters, nullable)
+│   └── is_canonical (boolean, primary company in cluster)
 │
 ├── Core Information
 │   ├── description (company overview, text)
@@ -155,13 +155,13 @@ industries
 └── industry_code (string, NAICS/SIC code, nullable)
 ```
 
-### Organization Locations Table
+### Company Locations Table
 **Purpose:** 1:Many relationship for offices/branches (replaces headquarters_* duplication)
 
 ```
-organization_locations
+company_locations
 ├── id (UUID, primary key)
-├── organization_id (FK to organizations, indexed)
+├── company_id (FK to companies, indexed)
 ├── address (string, nullable)
 ├── city (string, indexed)
 ├── province (string, indexed)
@@ -173,13 +173,13 @@ organization_locations
 └── updated_at (timestamptz)
 ```
 
-### Organization Aliases Table
+### Company Aliases Table
 **Purpose:** Track name variations for deduplication matching
 
 ```
-organization_aliases
+company_aliases
 ├── id (UUID, primary key)
-├── organization_id (FK to organizations, indexed)
+├── company_id (FK to companies, indexed)
 ├── alias_name (string, indexed)
 ├── alias_type (ENUM: legal, trading, acronym, former, common_misspelling)
 ├── is_primary (boolean, default false)
@@ -188,12 +188,12 @@ organization_aliases
 └── created_at (timestamptz)
 ```
 
-### Organization Enrichment Table
+### Company Info Table
 **Purpose:** Optional data discovered through external APIs/registries (often null initially)
 
 ```
-organization_enrichment
-├── organization_id (FK to organizations, primary key)
+company_info
+├── company_id (FK to companies, primary key)
 ├── Legal & Registration
 │   ├── legal_name (official registered name, nullable)
 │   ├── trading_name (doing-business-as name, nullable)
@@ -223,13 +223,13 @@ organization_enrichment
     └── updated_at (timestamptz)
 ```
 
-### Organization Social Links Table
+### Company Social Links Table
 **Purpose:** Extensible social media presence (avoids adding columns for each platform)
 
 ```
-organization_social_links
+company_social_links
 ├── id (UUID, primary key)
-├── organization_id (FK to organizations, indexed)
+├── company_id (FK to companies, indexed)
 ├── platform (ENUM: linkedin, twitter, facebook, instagram, github, youtube, etc.)
 ├── url (string)
 ├── username (string, nullable)
@@ -237,12 +237,12 @@ organization_social_links
 └── updated_at (timestamptz)
 ```
 
-### Organization Stats Table
+### Company Stats Table
 **Purpose:** Frequently updated denormalized metrics (separated to avoid bloat on core table)
 
 ```
-organization_stats
-├── organization_id (FK to organizations, primary key)
+company_stats
+├── company_id (FK to companies, primary key)
 ├── total_active_jobs (integer, default 0)
 ├── total_all_time_jobs (integer, default 0)
 ├── avg_job_duration_days (integer, nullable)
@@ -253,12 +253,12 @@ organization_stats
 ```
 
 ### Provenance Tracking Table
-**Purpose:** Track which sources contributed to organization data (many-to-many)
+**Purpose:** Track which sources contributed to company data (many-to-many)
 
 ```
-organization_data_sources
+company_data_sources
 ├── id (UUID, primary key)
-├── organization_id (FK to organizations, indexed)
+├── company_id (FK to companies, indexed)
 ├── source_name (string, e.g., "pnet", "linkedin", "manual_entry")
 ├── source_url (string, nullable)
 ├── data_contributed (JSONB, which fields came from this source)
@@ -294,8 +294,8 @@ Job Posting (Normalized)
 │   ├── description_embedding (vector for semantic search)
 │   └── job_type (ENUM: full_time, part_time, contract, etc.)
 │
-├── Organization Relationship
-│   ├── organization_id (FK to organizations table, REQUIRED)
+├── Company Relationship
+│   ├── company_id (FK to companies table, REQUIRED)
 │   ├── company_name_raw (original from job posting source)
 │   ├── department (if specified)
 │   ├── posted_by (recruiter name, if available)

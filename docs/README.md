@@ -32,12 +32,12 @@ High-level vision, objectives, and technology choices. Start here to understand 
 
 ### 📊 [02 - Job Posting Standards](./02-job-posting-standards.md)
 
-Research on industry standards for job postings and our proposed unified schema, **including organizations as first-class entities**.
+Research on industry standards for job postings and our proposed unified schema, **including companies as first-class entities**.
 
 **Key Topics:**
 
 - Schema.org JobPosting standard
-- **Organization schema (first-class entities)**
+- **Company schema (first-class entities)**
 - South African job board analysis
 - Recommended unified schema design
 - Data normalization strategies
@@ -45,14 +45,14 @@ Research on industry standards for job postings and our proposed unified schema,
 
 ### 🔍 [03 - Deduplication Strategy](./03-deduplication-strategy.md)
 
-Comprehensive approach to identifying and handling duplicates for **both job postings AND organizations**.
+Comprehensive approach to identifying and handling duplicates for **both job postings AND companies**.
 
 **Key Topics:**
 
-- **Dual deduplication (jobs + organizations)**
+- **Dual deduplication (jobs + companies)**
 - Types of duplicates (exact, near, fuzzy)
 - Multi-stage detection pipeline
-- **Organization-specific deduplication**
+- **Company-specific deduplication**
 - Database schema for duplicates
 - Clustering algorithms
 - **Workflow orchestration**
@@ -79,7 +79,7 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 
 - **Oban Pro workflow engine**
 - Job ingestion pipeline
-- Organization enrichment pipeline
+- Company enrichment pipeline
 - **Deduplication workflows**
 - **Spam filtering workflows**
 - **RAG/vectorization for semantic search**

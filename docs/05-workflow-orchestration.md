@@ -16,7 +16,7 @@ New Job Scraped
     ↓
 [Normalization] → Standardize fields
     ↓
-[Organization Matching] → Find or create organization
+[Company Matching] → Find or create company
     ↓
 [Skill Extraction] → NLP/keyword extraction
     ↓
@@ -35,11 +35,11 @@ New Job Scraped
 [Publication] → Mark as active/searchable
 ```
 
-### 2. Organization Enrichment Pipeline
+### 2. Company Enrichment Pipeline
 ```
-Organization Identified
+Company Identified
     ↓
-[Deduplication] → Match against existing orgs
+[Deduplication] → Match against existing companies
     ↓
 [Data Merging] → Consolidate from multiple sources
     ↓
@@ -53,7 +53,7 @@ Organization Identified
     ↓
 [Location Geocoding] → Map headquarters location
     ↓
-[Vectorization] → Generate org embeddings
+[Vectorization] → Generate company embeddings
     ↓
 [Update Jobs] → Propagate changes to related jobs
 ```
@@ -97,7 +97,7 @@ defmodule Hirehound.Workflows.JobIngestion do
     id
     |> new_parse_job()
     |> new_normalize_job()
-    |> new_match_organization()
+    |> new_match_company()
     |> new_extract_skills()
     |> new_vectorize()
     |> new_deduplicate()
@@ -223,7 +223,7 @@ config :hirehound, Oban,
     # CPU-intensive processing
     processing: [limit: 20, paused: false],
     
-    # Organization enrichment (external API calls)
+    # Company enrichment (external API calls)
     enrichment: [limit: 10, rate_limit: [allowed: 50, period: 60]],
     
     # ML/vectorization (GPU jobs if available)
@@ -279,8 +279,8 @@ defmodule Hirehound.Workers.JobProcessor do
          {:ok, _} <- Jobs.update_posting(job_posting, normalized) do
       
       # Trigger next step in workflow
-      %{job_posting_id: id, step: "match_organization"}
-      |> Hirehound.Workers.OrganizationMatcher.new()
+      %{job_posting_id: id, step: "match_company"}
+      |> Hirehound.Workers.CompanyMatcher.new()
       |> Oban.insert()
       
       :ok
@@ -340,35 +340,35 @@ defmodule Hirehound.Workers.BatchDeduplication do
 end
 ```
 
-#### 4. Organization Enrichment Worker
+#### 4. Company Enrichment Worker
 ```elixir
-defmodule Hirehound.Workers.OrganizationEnrichment do
+defmodule Hirehound.Workers.CompanyEnrichment do
   use Oban.Worker,
     queue: :enrichment,
     max_attempts: 5,
     priority: 3
   
   @impl Oban.Worker
-  def perform(%Job{args: %{"organization_id" => id, "source" => source}}) do
-    org = Organizations.get!(id)
+  def perform(%Job{args: %{"company_id" => id, "source" => source}}) do
+    company = Companies.get!(id)
     
     case source do
       "linkedin" -> 
-        LinkedIn.API.fetch_company_data(org.linkedin_url)
-        |> merge_into_organization(org)
+        LinkedIn.API.fetch_company_data(company.linkedin_url)
+        |> merge_into_company(company)
         
       "clearbit" ->
-        Clearbit.API.enrich_company(org.domain)
-        |> merge_into_organization(org)
+        Clearbit.API.enrich_company(company.domain)
+        |> merge_into_company(company)
         
       "crunchbase" ->
-        Crunchbase.API.fetch_company(org.name)
-        |> merge_into_organization(org)
+        Crunchbase.API.fetch_company(company.name)
+        |> merge_into_company(company)
     end
   end
   
-  defp merge_into_organization({:ok, data}, org) do
-    Organizations.merge_external_data(org, data)
+  defp merge_into_company({:ok, data}, company) do
+    Companies.merge_external_data(company, data)
   end
 end
 ```
@@ -433,13 +433,13 @@ defmodule Hirehound.Workers.RAGIndexing do
   end
   
   @impl Oban.Worker
-  def perform(%Job{args: %{"type" => "organization", "id" => id}}) do
-    org = Organizations.get!(id)
+  def perform(%Job{args: %{"type" => "company", "id" => id}}) do
+    company = Companies.get!(id)
     
-    # Generate organization embedding
-    embedding = embed_text("#{org.name} #{org.description} #{org.industry}")
+    # Generate company embedding
+    embedding = embed_text("#{company.name} #{company.description} #{company.industry}")
     
-    VectorStore.upsert_org_embedding(id, embedding)
+    VectorStore.upsert_company_embedding(id, embedding)
   end
   
   defp embed_text(text) do
@@ -466,12 +466,12 @@ defmodule Hirehound.Workers.IncrementalIndexer do
       {"job_posting", "delete"} ->
         Search.Index.delete_job(id)
         
-      {"organization", "upsert"} ->
-        org = Organizations.get!(id)
-        Search.Index.upsert_organization(org)
+      {"company", "upsert"} ->
+        company = Companies.get!(id)
+        Search.Index.upsert_company(company)
         
-      {"organization", "delete"} ->
-        Search.Index.delete_organization(id)
+      {"company", "delete"} ->
+        Search.Index.delete_company(id)
     end
   end
 end
@@ -485,14 +485,14 @@ end
 defmodule Hirehound.Workflows.ParallelEnrichment do
   use Oban.Pro.Workflow
   
-  def enrich_organization(org_id) do
+  def enrich_company(company_id) do
     Workflow.new()
-    |> Workflow.add(:linkedin, Workers.LinkedInEnrichment.new(%{org_id: org_id}))
-    |> Workflow.add(:clearbit, Workers.ClearbitEnrichment.new(%{org_id: org_id}))
-    |> Workflow.add(:crunchbase, Workers.CrunchbaseEnrichment.new(%{org_id: org_id}))
+    |> Workflow.add(:linkedin, Workers.LinkedInEnrichment.new(%{company_id: company_id}))
+    |> Workflow.add(:clearbit, Workers.ClearbitEnrichment.new(%{company_id: company_id}))
+    |> Workflow.add(:crunchbase, Workers.CrunchbaseEnrichment.new(%{company_id: company_id}))
     |> Workflow.add(
         :merge,
-        Workers.MergeEnrichmentData.new(%{org_id: org_id}),
+        Workers.MergeEnrichmentData.new(%{company_id: company_id}),
         deps: [:linkedin, :clearbit, :crunchbase]
       )
   end

@@ -11,15 +11,15 @@
 
 ## Phase 1: Database Foundation (Start Here!)
 
-### Goal: Set up the core data model for organizations and job postings
+### Goal: Set up the core data model for companies and job postings
 
 ### Tasks (in order)
 
-#### 1.1 Create Organizations Schema (Core Table)
+#### 1.1 Create Companies Schema (Core Table)
 
 ```bash
-# Generate core organizations table (minimal, stable fields)
-mix phx.gen.schema Organizations.Organization organizations \
+# Generate core companies table (minimal, stable fields)
+mix phx.gen.schema Companies.Company companies \
   slug:string:unique \
   name:string \
   description:text \
@@ -46,7 +46,7 @@ mix phx.gen.schema Organizations.Organization organizations \
 
 ```bash
 # Controlled vocabulary for industry classification
-mix phx.gen.schema Organizations.Industry industries \
+mix phx.gen.schema Companies.Industry industries \
   name:string \
   slug:string:unique \
   parent_id:references:industries \
@@ -55,12 +55,12 @@ mix phx.gen.schema Organizations.Industry industries \
   --no-context
 ```
 
-#### 1.3 Create Organization Locations Table
+#### 1.3 Create Company Locations Table
 
 ```bash
 # 1:Many relationship for offices/branches
-mix phx.gen.schema Organizations.Location organization_locations \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.Location company_locations \
+  company_id:references:companies \
   address:string \
   city:string \
   province:string \
@@ -72,14 +72,14 @@ mix phx.gen.schema Organizations.Location organization_locations \
 
 **Then manually add:**
 - `coordinates` (PostGIS point type)
-- Indexes on: organization_id, city, province
+- Indexes on: company_id, city, province
 
-#### 1.4 Create Organization Aliases Table
+#### 1.4 Create Company Aliases Table
 
 ```bash
 # Track name variations for deduplication
-mix phx.gen.schema Organizations.Alias organization_aliases \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.Alias company_aliases \
+  company_id:references:companies \
   alias_name:string \
   alias_type:string \
   is_primary:boolean \
@@ -89,15 +89,15 @@ mix phx.gen.schema Organizations.Alias organization_aliases \
 ```
 
 **Then manually add:**
-- Index on: organization_id, alias_name
+- Index on: company_id, alias_name
 - ENUM for alias_type: legal, trading, acronym, former, common_misspelling
 
-#### 1.5 Create Organization Enrichment Table
+#### 1.5 Create Company Info Table
 
 ```bash
 # Optional data from external APIs (often null initially)
-mix phx.gen.schema Organizations.Enrichment organization_enrichment \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.Info company_info \
+  company_id:references:companies \
   legal_name:string \
   trading_name:string \
   registration_number:string \
@@ -121,15 +121,15 @@ mix phx.gen.schema Organizations.Enrichment organization_enrichment \
 ```
 
 **Then manually add:**
-- Primary key should be organization_id (not id)
+- Primary key should be company_id (not id)
 - ENUMs for company_type, size_category, funding_stage, enrichment_status
 
-#### 1.6 Create Organization Stats Table
+#### 1.6 Create Company Stats Table
 
 ```bash
 # Frequently updated metrics (separated to avoid core table bloat)
-mix phx.gen.schema Organizations.Stats organization_stats \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.Stats company_stats \
+  company_id:references:companies \
   total_active_jobs:integer \
   total_all_time_jobs:integer \
   avg_job_duration_days:integer \
@@ -139,15 +139,15 @@ mix phx.gen.schema Organizations.Stats organization_stats \
 ```
 
 **Then manually add:**
-- Primary key should be organization_id (not id)
+- Primary key should be company_id (not id)
 - `typical_job_types` (JSONB array)
 
-#### 1.7 Create Organization Social Links Table
+#### 1.7 Create Company Social Links Table
 
 ```bash
 # Extensible social media presence
-mix phx.gen.schema Organizations.SocialLink organization_social_links \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.SocialLink company_social_links \
+  company_id:references:companies \
   platform:string \
   url:string \
   username:string \
@@ -157,12 +157,12 @@ mix phx.gen.schema Organizations.SocialLink organization_social_links \
 **Then manually add:**
 - ENUM for platform: linkedin, twitter, facebook, instagram, github, youtube
 
-#### 1.8 Create Organization Data Sources Table
+#### 1.8 Create Company Data Sources Table
 
 ```bash
 # Track which sources contributed data (provenance)
-mix phx.gen.schema Organizations.DataSource organization_data_sources \
-  organization_id:references:organizations \
+mix phx.gen.schema Companies.DataSource company_data_sources \
+  company_id:references:companies \
   source_name:string \
   source_url:string \
   first_seen_at:utc_datetime \
@@ -177,13 +177,13 @@ mix phx.gen.schema Organizations.DataSource organization_data_sources \
 **Test in IEx:**
 ```elixir
 iex -S mix
-iex> alias Hirehound.Organizations.{Organization, Industry}
+iex> alias Hirehound.Companies.{Company, Industry}
 
 # Create industry first
 iex> industry = %Industry{name: "Information Technology", slug: "information-technology"} |> Repo.insert!()
 
-# Create organization
-iex> %Organization{name: "Google", industry_id: industry.id} |> Repo.insert()
+# Create company
+iex> %Company{name: "Google", industry_id: industry.id} |> Repo.insert()
 ```
 
 #### 1.9 Create Job Postings Schema
@@ -199,7 +199,7 @@ mix phx.gen.schema Jobs.JobPosting job_postings \
   location_type:string \
   province:string \
   city:string \
-  organization_id:references:organizations \
+  company_id:references:companies \
   posted_date:utc_datetime \
   quality_score:integer \
   duplicate_cluster_id:uuid \
@@ -218,32 +218,44 @@ mix phx.gen.schema Jobs.JobPosting job_postings \
 **Test in IEx:**
 ```elixir
 iex> alias Hirehound.Jobs.JobPosting
-iex> org = Repo.get_by(Organization, name: "Google")
-iex> %JobPosting{title: "Senior Developer", organization_id: org.id} |> Repo.insert()
+iex> company = Repo.get_by(Company, name: "Google")
+iex> %JobPosting{title: "Senior Developer", company_id: company.id} |> Repo.insert()
 ```
 
-#### 1.10 Create Duplicate Clusters Schema
+#### 1.10 Create Job Duplicate Clusters Schema
 
 ```bash
-mix phx.gen.schema Deduplication.DuplicateCluster duplicate_clusters \
-  entity_type:string \
-  canonical_entity_id:uuid \
+mix phx.gen.schema Deduplication.JobDuplicateCluster job_duplicate_clusters \
+  canonical_job_id:references:job_postings \
   member_count:integer \
   confidence_score:decimal \
   --no-context
 ```
 
 **Then add:**
-- `duplicate_relationships` table for tracking pairwise similarities
+- `job_duplicate_relationships` table for tracking pairwise similarities
 
-#### 1.11 Run Migrations and Verify
+#### 1.11 Create Company Duplicate Clusters Schema
+
+```bash
+mix phx.gen.schema Deduplication.CompanyDuplicateCluster company_duplicate_clusters \
+  canonical_company_id:references:companies \
+  member_count:integer \
+  confidence_score:decimal \
+  --no-context
+```
+
+**Then add:**
+- `company_duplicate_relationships` table for tracking pairwise similarities
+
+#### 1.12 Run Migrations and Verify
 
 ```bash
 mix ecto.migrate
 
 # Test in IEx
 iex -S mix
-iex> Repo.all(Organization) |> length()
+iex> Repo.all(Company) |> length()
 0  # ✓ Table exists
 ```
 
@@ -355,7 +367,7 @@ iex> Scraper.which_scraper("https://pnet.co.za/jobs")
 
 ### Tasks
 
-#### 3.1 Organization Name Matcher (IEx-first!)
+#### 3.1 Company Name Matcher (IEx-first!)
 
 ```elixir
 # In IEx first
@@ -364,7 +376,7 @@ iex> normalized = raw_company |> String.downcase() |> String.replace(~r/\(pty\) 
 "google"
 
 # Search for match
-iex> Repo.get_by(Organization, name: "google")
+iex> Repo.get_by(Company, name: "google")
 
 # Test fuzzy matching
 iex> String.jaro_distance("google", "Google South Africa")
@@ -372,7 +384,7 @@ iex> String.jaro_distance("google", "Google South Africa")
 
 **Then codify:**
 ```bash
-touch lib/hirehound/organizations/name_matcher.ex
+touch lib/hirehound/companies/name_matcher.ex
 ```
 
 #### 3.2 Job Normalization Pipeline
@@ -389,15 +401,15 @@ touch lib/hirehound/organizations/name_matcher.ex
 iex> {:ok, raw_jobs} = PNetScraper.scrape_listing_page(url)
 iex> first_raw = List.first(raw_jobs)
 
-# Find or create organization
-iex> {:ok, org} = Organizations.find_or_create_by_name(first_raw.company)
+# Find or create company
+iex> {:ok, company} = Companies.find_or_create_by_name(first_raw.company)
 
 # Normalize job
 iex> normalized = Jobs.Normalization.normalize(first_raw)
 
 # Save to database
 iex> %JobPosting{}
-     |> JobPosting.changeset(Map.put(normalized, :organization_id, org.id))
+     |> JobPosting.changeset(Map.put(normalized, :company_id, company.id))
      |> Repo.insert()
 ```
 
@@ -416,7 +428,7 @@ iex> %JobPosting{}
 ```elixir
 # In IEx
 iex> job1 = Repo.get(JobPosting, "some-uuid")
-iex> normalized = "#{job1.title}|#{job1.organization_id}|#{job1.city}"
+iex> normalized = "#{job1.title}|#{job1.company_id}|#{job1.city}"
 iex> hash = :crypto.hash(:md5, normalized) |> Base.encode16()
 
 # Find duplicates
@@ -440,9 +452,9 @@ Add: `add :combined_hash, :string` + index
 
 **Create duplicate job in IEx:**
 ```elixir
-iex> org = Repo.get_by(Organization, name: "google")
-iex> job1 = %JobPosting{title: "Dev", organization_id: org.id} |> Repo.insert!()
-iex> job2 = %JobPosting{title: "Dev", organization_id: org.id} |> Repo.insert!()
+iex> company = Repo.get_by(Company, name: "google")
+iex> job1 = %JobPosting{title: "Dev", company_id: company.id} |> Repo.insert!()
+iex> job2 = %JobPosting{title: "Dev", company_id: company.id} |> Repo.insert!()
 
 # Run deduplication
 iex> Deduplication.ExactMatcher.find_duplicates(job1)
@@ -506,8 +518,8 @@ config :hirehound, Oban,
 
 ### Priority 1: Database Setup ⚡
 
-1. [ ] Run schema generators for all organization tables (1.1-1.8)
-2. [ ] Run schema generators for job postings and duplicate clusters (1.9-1.10)
+1. [ ] Run schema generators for all company tables (1.1-1.8)
+2. [ ] Run schema generators for job postings and duplicate clusters (1.9-1.11)
 3. [ ] Manually customize migrations (add JSONB, indexes, ENUMs, vectors)
 4. [ ] Run migrations
 5. [ ] Test creating entities in IEx
@@ -527,7 +539,7 @@ config :hirehound, Oban,
 
 ### Priority 3: Basic Integration ⚡
 
-1. [ ] Build organization name matcher
+1. [ ] Build company name matcher
 2. [ ] Build job normalization
 3. [ ] Integrate: scrape → normalize → save to DB
 4. [ ] Test end-to-end in IEx
