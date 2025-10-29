@@ -772,5 +772,3 @@ Oban Workers + Workflows
 - ✅ Testable: mock FetcherBehaviour in tests
 
 ---
-
-**Next step:** Should I add this analysis to the documentation and update the development practices with the Fetcher pattern?
