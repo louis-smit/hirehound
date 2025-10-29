@@ -212,7 +212,7 @@ defmodule Hirehound.Fetcher do
 end
 
 defmodule Hirehound.Scrapers.PNetScraper do
-  @behaviour Scrapers.Behaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   @impl true
   def scrape_listing_page(url) do
@@ -335,7 +335,7 @@ end
 
 # 6. Configure per job board
 defmodule LinkedInScraper do
-  @behaviour Scrapers.Behaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   @impl true
   def metadata do
@@ -475,7 +475,7 @@ end
 
 # We already designed this:
 defmodule PNetScraper do
-  @behaviour Scrapers.Behaviour  # ← Our design
+  @behaviour Hirehound.Scrapers.Behaviour
   
   def scrape_listing_page(url) do  # ← Our signature
     {:ok, [...]}
