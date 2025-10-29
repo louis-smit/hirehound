@@ -107,91 +107,173 @@ The system uses three primary entity types:
 
 Organizations are **first-class entities** that exist independently of job postings. We build comprehensive organizational profiles by aggregating data from multiple sources.
 
+**Design Philosophy:** Normalized structure with tables separated by update frequency and cardinality to minimize bloat, maximize query performance, and avoid excessive nullable columns.
+
+### Core Organizations Table
+**Purpose:** Minimal, stable identity data that changes infrequently
+
 ```
-Organization
+organizations
 ├── Identity
 │   ├── id (UUID, primary key)
-│   ├── slug (URL-friendly identifier)
-│   ├── canonical_name (normalized, official name)
-│   ├── name_variations (JSONB array of aliases/variations)
-│   ├── duplicate_cluster_id (FK to org clusters)
+│   ├── slug (URL-friendly identifier, unique)
+│   ├── name (canonical display name)
+│   ├── duplicate_cluster_id (FK to org clusters, nullable)
 │   └── is_canonical (boolean, primary org in cluster)
 │
 ├── Core Information
-│   ├── legal_name (official registered name)
-│   ├── trading_name (doing-business-as name)
-│   ├── description (company overview)
+│   ├── description (company overview, text)
 │   ├── description_embedding (vector for semantic search)
-│   ├── industry (normalized industry category)
-│   ├── industry_tags (JSONB array of sub-industries)
-│   ├── size_category (ENUM: startup, small, medium, large, enterprise)
-│   ├── employee_count_min
-│   ├── employee_count_max
-│   ├── founded_year
-│   └── company_type (ENUM: private, public, non_profit, government)
-│
-├── Location
-│   ├── headquarters_country (ISO 3166-1, default "ZA")
-│   ├── headquarters_province
-│   ├── headquarters_city
-│   ├── headquarters_address
-│   ├── headquarters_coordinates (PostGIS point)
-│   ├── office_locations (JSONB array of additional offices)
-│   └── operates_remotely (boolean)
-│
-├── Contact & Online Presence
+│   ├── industry_id (FK to industries table)
 │   ├── website_url (primary website)
-│   ├── careers_page_url
-│   ├── linkedin_url
-│   ├── linkedin_id (LinkedIn company ID)
-│   ├── twitter_handle
-│   ├── facebook_url
-│   ├── contact_email
-│   └── phone_number
-│
-├── Branding
-│   ├── logo_url (primary logo)
-│   ├── logo_file_path (stored locally)
-│   ├── brand_colors (JSONB array of hex colors)
-│   └── tagline
-│
-├── Business Information
-│   ├── registration_number (company registration)
-│   ├── tax_number (VAT/tax ID)
-│   ├── stock_symbol (if publicly traded)
-│   ├── funding_stage (ENUM: bootstrapped, seed, series_a, etc.)
-│   ├── total_funding_amount
-│   ├── revenue_range (ENUM or min/max)
-│   └── ownership_structure
-│
-├── Data Quality & Provenance
-│   ├── data_sources (JSONB array: which sources contributed)
-│   ├── quality_score (0-100, based on completeness)
-│   ├── verified (boolean, manually verified)
-│   ├── verification_date
-│   ├── last_enriched_at (last external data fetch)
-│   └── enrichment_status (ENUM: pending, in_progress, complete, failed)
-│
-├── Statistics (denormalized)
-│   ├── total_active_jobs (current open positions)
-│   ├── total_all_time_jobs (historical total)
-│   ├── avg_job_duration_days
-│   ├── typical_job_types (JSONB array)
-│   └── hiring_frequency_score
+│   ├── logo_url (primary logo URL)
+│   ├── logo_file_path (stored locally, nullable)
+│   └── quality_score (0-100, based on completeness)
 │
 ├── Metadata
-│   ├── created_at
-│   ├── updated_at
-│   ├── first_seen_at (first scraped)
-│   ├── last_job_posted_at
+│   ├── created_at (timestamptz)
+│   ├── updated_at (timestamptz)
 │   ├── raw_data (JSONB, original scraped data)
-│   └── processing_notes (JSONB)
+│   └── processing_notes (JSONB, warnings/issues)
 │
 └── Search & Matching
     ├── search_vector (tsvector for full-text search)
     ├── name_fingerprint (for fuzzy deduplication)
     └── combined_hash (for exact duplicate detection)
 ```
+
+### Industries Table
+**Purpose:** Controlled vocabulary for industry classification (prevents "IT" vs "Information Technology" chaos)
+
+```
+industries
+├── id (integer, primary key)
+├── name (string, e.g., "Information Technology")
+├── slug (string, e.g., "information-technology", unique)
+├── parent_id (FK to industries, for hierarchy, nullable)
+├── description (text, nullable)
+└── industry_code (string, NAICS/SIC code, nullable)
+```
+
+### Organization Locations Table
+**Purpose:** 1:Many relationship for offices/branches (replaces headquarters_* duplication)
+
+```
+organization_locations
+├── id (UUID, primary key)
+├── organization_id (FK to organizations, indexed)
+├── address (string, nullable)
+├── city (string, indexed)
+├── province (string, indexed)
+├── country (ISO 3166-1 alpha-2, default "ZA")
+├── coordinates (PostGIS point, nullable)
+├── is_headquarters (boolean, default false)
+├── is_active (boolean, default true)
+├── created_at (timestamptz)
+└── updated_at (timestamptz)
+```
+
+### Organization Aliases Table
+**Purpose:** Track name variations for deduplication matching
+
+```
+organization_aliases
+├── id (UUID, primary key)
+├── organization_id (FK to organizations, indexed)
+├── alias_name (string, indexed)
+├── alias_type (ENUM: legal, trading, acronym, former, common_misspelling)
+├── is_primary (boolean, default false)
+├── source (string, where we learned this alias, nullable)
+├── verified (boolean, default false)
+└── created_at (timestamptz)
+```
+
+### Organization Enrichment Table
+**Purpose:** Optional data discovered through external APIs/registries (often null initially)
+
+```
+organization_enrichment
+├── organization_id (FK to organizations, primary key)
+├── Legal & Registration
+│   ├── legal_name (official registered name, nullable)
+│   ├── trading_name (doing-business-as name, nullable)
+│   ├── registration_number (company registration, nullable)
+│   ├── tax_number (VAT/tax ID, nullable)
+│   └── company_type (ENUM: private, public, non_profit, government, nullable)
+│
+├── Size & Funding
+│   ├── size_category (ENUM: startup, small, medium, large, enterprise, nullable)
+│   ├── employee_count_min (integer, nullable)
+│   ├── employee_count_max (integer, nullable)
+│   ├── founded_year (integer, nullable)
+│   ├── funding_stage (ENUM: bootstrapped, seed, series_a, series_b, etc., nullable)
+│   ├── total_funding_amount (decimal, nullable)
+│   └── stock_symbol (string, if publicly traded, nullable)
+│
+├── External IDs
+│   ├── linkedin_id (LinkedIn company ID, nullable)
+│   ├── linkedin_url (string, nullable)
+│   ├── crunchbase_id (nullable)
+│   └── clearbit_id (nullable)
+│
+└── Metadata
+    ├── last_enriched_at (timestamptz, nullable)
+    ├── enrichment_status (ENUM: pending, in_progress, complete, failed)
+    ├── enrichment_source (string, e.g., "linkedin", "clearbit", nullable)
+    └── updated_at (timestamptz)
+```
+
+### Organization Social Links Table
+**Purpose:** Extensible social media presence (avoids adding columns for each platform)
+
+```
+organization_social_links
+├── id (UUID, primary key)
+├── organization_id (FK to organizations, indexed)
+├── platform (ENUM: linkedin, twitter, facebook, instagram, github, youtube, etc.)
+├── url (string)
+├── username (string, nullable)
+├── created_at (timestamptz)
+└── updated_at (timestamptz)
+```
+
+### Organization Stats Table
+**Purpose:** Frequently updated denormalized metrics (separated to avoid bloat on core table)
+
+```
+organization_stats
+├── organization_id (FK to organizations, primary key)
+├── total_active_jobs (integer, default 0)
+├── total_all_time_jobs (integer, default 0)
+├── avg_job_duration_days (integer, nullable)
+├── typical_job_types (JSONB array, nullable)
+├── hiring_frequency_score (integer, 0-100, nullable)
+├── last_job_posted_at (timestamptz, nullable)
+└── updated_at (timestamptz)
+```
+
+### Provenance Tracking Table
+**Purpose:** Track which sources contributed to organization data (many-to-many)
+
+```
+organization_data_sources
+├── id (UUID, primary key)
+├── organization_id (FK to organizations, indexed)
+├── source_name (string, e.g., "pnet", "linkedin", "manual_entry")
+├── source_url (string, nullable)
+├── data_contributed (JSONB, which fields came from this source)
+├── first_seen_at (timestamptz)
+├── last_seen_at (timestamptz)
+└── is_active (boolean, still contributing data)
+```
+
+**Rationale for Normalization:**
+- **Reduces NULL columns** - Enrichment data often unavailable initially
+- **Prevents table bloat** - Stats update frequently, core data doesn't
+- **Improves query performance** - Smaller core table, better index efficiency
+- **Enables filtering** - "Find orgs with offices in Cape Town" (can't do with JSONB efficiently)
+- **Supports deduplication** - Aliases table critical for fuzzy matching
+- **Maintains referential integrity** - Industries controlled vocabulary
 
 ### Proposed Field Structure
 

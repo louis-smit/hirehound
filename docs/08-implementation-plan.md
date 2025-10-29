@@ -15,22 +15,18 @@
 
 ### Tasks (in order)
 
-#### 1.1 Create Organizations Schema
+#### 1.1 Create Organizations Schema (Core Table)
 
 ```bash
-# Generate the migration and schema
+# Generate core organizations table (minimal, stable fields)
 mix phx.gen.schema Organizations.Organization organizations \
   slug:string:unique \
-  canonical_name:string \
-  legal_name:string \
-  trading_name:string \
+  name:string \
   description:text \
-  industry:string \
-  headquarters_country:string \
-  headquarters_province:string \
-  headquarters_city:string \
+  industry_id:integer \
   website_url:string \
-  linkedin_url:string \
+  logo_url:string \
+  logo_file_path:string \
   quality_score:integer \
   duplicate_cluster_id:uuid \
   is_canonical:boolean \
@@ -38,20 +34,159 @@ mix phx.gen.schema Organizations.Organization organizations \
   --no-context
 ```
 
+**Then manually add to migration:**
+- `description_embedding` (vector type if using pgvector)
+- `search_vector` (tsvector for full-text search)
+- `name_fingerprint` (string for fuzzy matching)
+- `combined_hash` (string for exact dedup)
+- `processing_notes` (JSONB)
+- Indexes on: slug, name, industry_id, duplicate_cluster_id, search_vector
+
+#### 1.2 Create Industries Table
+
+```bash
+# Controlled vocabulary for industry classification
+mix phx.gen.schema Organizations.Industry industries \
+  name:string \
+  slug:string:unique \
+  parent_id:references:industries \
+  description:text \
+  industry_code:string \
+  --no-context
+```
+
+#### 1.3 Create Organization Locations Table
+
+```bash
+# 1:Many relationship for offices/branches
+mix phx.gen.schema Organizations.Location organization_locations \
+  organization_id:references:organizations \
+  address:string \
+  city:string \
+  province:string \
+  country:string \
+  is_headquarters:boolean \
+  is_active:boolean \
+  --no-context
+```
+
 **Then manually add:**
-- JSONB fields (`name_variations`, `industry_tags`, `office_locations`)
-- Vector field for embeddings (if using pgvector)
-- Indexes (name, domain, cluster_id)
-- Full-text search vector (tsvector)
+- `coordinates` (PostGIS point type)
+- Indexes on: organization_id, city, province
+
+#### 1.4 Create Organization Aliases Table
+
+```bash
+# Track name variations for deduplication
+mix phx.gen.schema Organizations.Alias organization_aliases \
+  organization_id:references:organizations \
+  alias_name:string \
+  alias_type:string \
+  is_primary:boolean \
+  source:string \
+  verified:boolean \
+  --no-context
+```
+
+**Then manually add:**
+- Index on: organization_id, alias_name
+- ENUM for alias_type: legal, trading, acronym, former, common_misspelling
+
+#### 1.5 Create Organization Enrichment Table
+
+```bash
+# Optional data from external APIs (often null initially)
+mix phx.gen.schema Organizations.Enrichment organization_enrichment \
+  organization_id:references:organizations \
+  legal_name:string \
+  trading_name:string \
+  registration_number:string \
+  tax_number:string \
+  company_type:string \
+  size_category:string \
+  employee_count_min:integer \
+  employee_count_max:integer \
+  founded_year:integer \
+  funding_stage:string \
+  total_funding_amount:decimal \
+  stock_symbol:string \
+  linkedin_id:string \
+  linkedin_url:string \
+  crunchbase_id:string \
+  clearbit_id:string \
+  last_enriched_at:utc_datetime \
+  enrichment_status:string \
+  enrichment_source:string \
+  --no-context
+```
+
+**Then manually add:**
+- Primary key should be organization_id (not id)
+- ENUMs for company_type, size_category, funding_stage, enrichment_status
+
+#### 1.6 Create Organization Stats Table
+
+```bash
+# Frequently updated metrics (separated to avoid core table bloat)
+mix phx.gen.schema Organizations.Stats organization_stats \
+  organization_id:references:organizations \
+  total_active_jobs:integer \
+  total_all_time_jobs:integer \
+  avg_job_duration_days:integer \
+  hiring_frequency_score:integer \
+  last_job_posted_at:utc_datetime \
+  --no-context
+```
+
+**Then manually add:**
+- Primary key should be organization_id (not id)
+- `typical_job_types` (JSONB array)
+
+#### 1.7 Create Organization Social Links Table
+
+```bash
+# Extensible social media presence
+mix phx.gen.schema Organizations.SocialLink organization_social_links \
+  organization_id:references:organizations \
+  platform:string \
+  url:string \
+  username:string \
+  --no-context
+```
+
+**Then manually add:**
+- ENUM for platform: linkedin, twitter, facebook, instagram, github, youtube
+
+#### 1.8 Create Organization Data Sources Table
+
+```bash
+# Track which sources contributed data (provenance)
+mix phx.gen.schema Organizations.DataSource organization_data_sources \
+  organization_id:references:organizations \
+  source_name:string \
+  source_url:string \
+  first_seen_at:utc_datetime \
+  last_seen_at:utc_datetime \
+  is_active:boolean \
+  --no-context
+```
+
+**Then manually add:**
+- `data_contributed` (JSONB, which fields came from this source)
 
 **Test in IEx:**
 ```elixir
 iex -S mix
-iex> alias Hirehound.Organizations.Organization
-iex> %Organization{canonical_name: "Google"} |> Repo.insert()
+iex> alias Hirehound.Organizations.{Organization, Industry}
+
+# Create industry first
+iex> industry = %Industry{name: "Information Technology", slug: "information-technology"} |> Repo.insert!()
+
+# Create organization
+iex> %Organization{name: "Google", industry_id: industry.id} |> Repo.insert()
 ```
 
-#### 1.2 Create Job Postings Schema
+#### 1.9 Create Job Postings Schema
 
 ```bash
 mix phx.gen.schema Jobs.JobPosting job_postings \
@@ -83,11 +218,11 @@ mix phx.gen.schema Jobs.JobPosting job_postings \
 **Test in IEx:**
 ```elixir
 iex> alias Hirehound.Jobs.JobPosting
-iex> org = Repo.get_by(Organization, canonical_name: "Google")
+iex> org = Repo.get_by(Organization, name: "Google")
 iex> %JobPosting{title: "Senior Developer", organization_id: org.id} |> Repo.insert()
 ```
 
-#### 1.3 Create Duplicate Clusters Schema
+#### 1.10 Create Duplicate Clusters Schema
 
 ```bash
 mix phx.gen.schema Deduplication.DuplicateCluster duplicate_clusters \
@@ -101,7 +236,7 @@ mix phx.gen.schema Deduplication.DuplicateCluster duplicate_clusters \
 **Then add:**
 - `duplicate_relationships` table for tracking pairwise similarities
 
-#### 1.4 Run Migrations and Verify
+#### 1.11 Run Migrations and Verify
 
 ```bash
 mix ecto.migrate
@@ -229,7 +364,7 @@ iex> normalized = raw_company |> String.downcase() |> String.replace(~r/\(pty\) 
 "google"
 
 # Search for match
-iex> Repo.get_by(Organization, canonical_name: "google")
+iex> Repo.get_by(Organization, name: "google")
 
 # Test fuzzy matching
 iex> String.jaro_distance("google", "Google South Africa")
@@ -305,7 +440,7 @@ Add: `add :combined_hash, :string` + index
 
 **Create duplicate job in IEx:**
 ```elixir
-iex> org = Repo.get_by(Organization, canonical_name: "google")
+iex> org = Repo.get_by(Organization, name: "google")
 iex> job1 = %JobPosting{title: "Dev", organization_id: org.id} |> Repo.insert!()
 iex> job2 = %JobPosting{title: "Dev", organization_id: org.id} |> Repo.insert!()
 
@@ -371,12 +506,13 @@ config :hirehound, Oban,
 
 ### Priority 1: Database Setup ⚡
 
-1. [ ] Run schema generators for organizations and job postings
-2. [ ] Manually customize migrations (add JSONB, indexes)
-3. [ ] Run migrations
-4. [ ] Test creating entities in IEx
+1. [ ] Run schema generators for all organization tables (1.1-1.8)
+2. [ ] Run schema generators for job postings and duplicate clusters (1.9-1.10)
+3. [ ] Manually customize migrations (add JSONB, indexes, ENUMs, vectors)
+4. [ ] Run migrations
+5. [ ] Test creating entities in IEx
 
-**Time estimate:** 2-3 hours
+**Time estimate:** 3-4 hours
 
 ### Priority 2: First Scraper (IEx-First) ⚡
 
@@ -398,7 +534,7 @@ config :hirehound, Oban,
 
 **Time estimate:** 3-4 hours
 
-**Total Week 1:** ~10-13 hours to working scraper saving to database
+**Total Week 1:** ~10-14 hours to working scraper saving to database
 
 ---
 
