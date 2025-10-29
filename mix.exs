@@ -67,8 +67,9 @@ defmodule Hirehound.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:tidewave, "~> 0.5", only: :dev},
+      {:igniter, "~> 0.5", only: [:dev]},
       {:oban, "~> 2.19"},
-      {:igniter, "~> 0.5", only: [:dev]}
+      {:floki, "~> 0.38.0"}
     ]
   end
 
