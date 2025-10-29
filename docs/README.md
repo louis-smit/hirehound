@@ -129,6 +129,20 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 - **Immediate next steps** (this week)
 - Workflow options (autonomous vs collaborative)
 
+### 🕷️ [09 - Crawling Library Analysis](./09-crawling-library-analysis.md)
+
+**Comprehensive analysis** of crawling/scraping library options and headless browser strategies.
+
+**Key Topics:**
+
+- **Floki vs Hop vs Crawly** comparison
+- **Why NOT Crawly** (architectural conflicts)
+- **Headless browser options** (chrome-remote-interface vs Puppeteer)
+- **Layered approach** (HTTP → Headless → Optional Hop)
+- **Pluggable Fetcher architecture**
+- **Migration path** week-by-week
+- **Addresses "start simple" concern**
+
 ## Quick Start Guide
 
 If you're new to the project, we recommend reading in this order:
