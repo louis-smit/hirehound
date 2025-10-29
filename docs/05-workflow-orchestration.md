@@ -138,18 +138,72 @@ end
 
 #### Comparison Matrix
 
-| Feature | Oban Pro | Temporal | Custom Queue |
-|---------|----------|----------|--------------|
-| Elixir Native | ✅ Yes | ❌ SDK | ✅ Yes |
-| Workflow Engine | ✅ Built-in | ✅ Advanced | ❌ Manual |
-| Dependencies | PostgreSQL only | Temporal server | Varies |
-| Observability | ✅ Excellent | ✅ Best-in-class | ⚠️ Build yourself |
-| Learning Curve | Low | Medium | Low |
-| Cost | License fee | Self-host free | Free |
-| Saga Patterns | ⚠️ Manual | ✅ Built-in | ❌ Manual |
-| Scale | 10K+ jobs/sec | 100K+ jobs/sec | Depends |
+| Feature | Oban Pro | Temporal | Broadway | GenStage |
+|---------|----------|----------|----------|----------|
+| Elixir Native | ✅ Yes | ❌ SDK | ✅ Yes | ✅ Yes |
+| Workflow Engine | ✅ Built-in | ✅ Advanced | ❌ No | ❌ No |
+| Best For | Job queues, ETL | Cross-service sagas | Stream processing | Custom pipelines |
+| Dependencies | PostgreSQL only | Temporal server | Message broker | None |
+| Observability | ✅ Excellent | ✅ Best-in-class | ⚠️ Build yourself | ❌ Build yourself |
+| Learning Curve | Low | Medium | Medium | High |
+| Cost | License fee | Self-host free | Free | Free |
+| Durability | ✅ Built-in | ✅ Built-in | ⚠️ Broker-dependent | ❌ In-memory |
+| Rate Limiting | ✅ Built-in | ⚠️ Manual | ✅ Back-pressure | ✅ Back-pressure |
+| Retries | ✅ Built-in | ✅ Built-in | ⚠️ Manual | ❌ Manual |
+| Web Scraping | ✅ Perfect | ⚠️ Overkill | ❌ Not designed for | ❌ Not designed for |
+| Scale | 10K-100K jobs/day | 100K+ jobs/sec | 500K-5M+ events/day | Depends |
+| Throughput | Medium-High | Very High | Very High | High |
+| Latency | Minutes OK | Seconds | Sub-second | Milliseconds |
 
 **Decision:** Start with Oban Pro, evaluate Temporal if we need cross-service orchestration.
+
+#### Why Not Broadway or GenStage?
+
+**Broadway:**
+- ❌ Designed for consuming from **message brokers** (Kafka, SQS, RabbitMQ)
+- ❌ We don't have a broker (and don't need one)
+- ❌ Requires additional infrastructure
+- ❌ Overkill for web scraping workloads
+- ✅ Would only make sense at >500k events/day with sub-second latency requirements
+- ✅ Might consider if we add real-time event streaming later
+
+**GenStage:**
+- ❌ Too low-level - you build everything yourself
+- ❌ No durability (in-memory only)
+- ❌ No retries, scheduling, or observability built-in
+- ❌ Would need to rebuild what Oban already provides
+- ✅ Only use for custom in-memory streaming within a single node
+
+**Broadway vs Oban for Our Use Case:**
+
+```
+Our Requirements:
+✅ Scheduled scraping (hourly/daily)
+✅ Multi-step ETL with dependencies
+✅ Rate limiting per job board
+✅ Deduplication workflows
+✅ External API enrichment
+✅ Durable state between steps
+✅ Good observability
+
+Broadway Provides:
+✅ High-throughput streaming (don't need)
+✅ Message broker consumption (don't have)
+❌ Scheduled jobs (not designed for)
+❌ Durable workflows (broker handles durability)
+⚠️ Rate limiting (back-pressure only)
+
+Oban Pro Provides:
+✅ Scheduled jobs (Cron plugin)
+✅ Workflows with dependencies (DAGs)
+✅ Rate limiting (per queue)
+✅ Durable state (PostgreSQL)
+✅ Retries with backoff
+✅ Great observability (Oban Web)
+✅ Perfect for scraping workloads
+```
+
+**Verdict:** Oban Pro is the right choice. Broadway solves different problems.
 
 ## Background Job Architecture
 
@@ -644,15 +698,51 @@ end
 - Regular vacuum and analyze
 - Connection pooling tuning
 
+## When to Reconsider Broadway (Future)
+
+**Threshold indicators:**
+
+⚡ **Throughput:** Sustained >500k-1M messages/day  
+⚡ **Latency:** Need sub-second end-to-end pipeline latency  
+⚡ **Data source:** Migrating to event streams (Kafka/SQS/Kinesis)  
+⚡ **Scale:** PostgreSQL queue becomes bottleneck despite tuning  
+
+**Hybrid approach (if needed):**
+
+```elixir
+# Use Broadway for high-throughput ingestion
+# Use Oban for durable orchestration
+
+Kafka/SQS (event stream)
+    ↓
+Broadway Pipeline (streaming)
+    ├─ Fetch URLs
+    ├─ Parse HTML
+    └─ Extract data
+    ↓
+Store to Database
+    ↓
+Trigger Oban Workflow (durable)
+    ├─ Deduplicate
+    ├─ Enrich (external APIs)
+    └─ Index
+```
+
+**Current volumes:** 20k-150k pages/day (0.2-5 req/sec) - **well within Oban's range**
+
+---
+
 ## Summary
 
 Our workflow orchestration strategy:
 
-✅ **Oban Pro** for Elixir-native workflow engine
-✅ **Queue-per-concern** for isolation and tuning
-✅ **Sophisticated pipelines** for ingestion, deduplication, enrichment
-✅ **RAG/vectorization** for semantic search
-✅ **Comprehensive monitoring** and alerting
-✅ **Resilient failure handling** with retries and circuit breakers
+✅ **Oban Pro** for Elixir-native workflow engine  
+✅ **Queue-per-concern** for isolation and tuning  
+✅ **Sophisticated pipelines** for ingestion, deduplication, enrichment  
+✅ **RAG/vectorization** for semantic search  
+✅ **Comprehensive monitoring** and alerting  
+✅ **Resilient failure handling** with retries and circuit breakers  
+✅ **No Broadway/GenStage** - Not needed at our scale  
+✅ **PostgreSQL-backed** - No additional infrastructure required
 
-This architecture supports complex, multi-step processes while maintaining observability and reliability.
+This architecture supports complex, multi-step processes while maintaining observability and reliability at our expected scale (10k-100k jobs/day).

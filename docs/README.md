@@ -141,6 +141,7 @@ If you're new to the project, we recommend reading in this order:
 6. **[Deduplication Strategy](./03-deduplication-strategy.md)** - Understand the core challenge
 7. **[Workflow Orchestration](./05-workflow-orchestration.md)** - See background job architecture
 8. **[Next Steps](./04-next-steps.md)** - Detailed implementation roadmap
+9. **[Implementation Plan](./08-implementation-plan.md)** - Ready to code? Start here!
 
 ## Current Phase
 

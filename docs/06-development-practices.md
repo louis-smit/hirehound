@@ -114,9 +114,21 @@ end
 - ✅ If we add AI enrichment later, we can call LLMs from Oban workers
 - ✅ Only add Jido if we need agents that *reason* and *adapt* autonomously
 
+**Why NOT Broadway or GenStage:**
+- ❌ **Broadway** - Designed for message broker consumption (Kafka/SQS/RabbitMQ)
+  - We don't have a broker and don't need one
+  - Requires additional infrastructure
+  - Only makes sense at >500k-1M events/day with sub-second latency needs
+- ❌ **GenStage** - Too low-level, you build durability/retries/scheduling yourself
+  - In-memory only (no persistence)
+  - Would need to rebuild what Oban provides
+- ❌ **Jido** - Designed for agentic AI, not deterministic ETL pipelines
+  - Use only if we need LLM-powered agents that plan autonomously
+  - For scraping/dedup workflows, Oban is better
+
 **Alternatives considered:**
 - ❌ GenStage/Flow - Too low-level for our needs
-- ❌ Broadway - Overkill for our data volumes
+- ❌ Broadway - Overkill for our data volumes (see [Workflow Orchestration](./05-workflow-orchestration.md))
 - ❌ Jido - Designed for agentic AI, not ETL pipelines
 - ✅ Oban (Pro) - Perfect fit for job processing + workflow orchestration
 
