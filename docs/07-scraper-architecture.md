@@ -50,7 +50,7 @@ iex> Scraper.scrape_url("https://pnet.co.za/jobs")
                                    │
                                    ↓
               ┌─────────────────────────────────────────────────┐
-              │     PNetScraper (JobBoardBehaviour)             │
+              │     PNetScraper (Scrapers.Behaviour)            │
               ├─────────────────────────────────────────────────┤
               │  ✓ url_patterns()                               │
               │  ✓ metadata()                                   │
@@ -69,11 +69,16 @@ iex> Scraper.scrape_url("https://pnet.co.za/jobs")
 
 ## Components
 
-### 1. JobBoardBehaviour (Contract)
+### 1. Scrapers.Behaviour (Contract)
 
-**File:** `lib/hirehound/scrapers/job_board_behaviour.ex`
+**File:** `lib/hirehound/scrapers/behaviour.ex`
 
 **Purpose:** Define the interface all scrapers must implement
+
+**Why just "Behaviour"?**
+- Namespaced under `Scrapers` module - purpose is clear from context
+- Specifically for scraping (not publishing or syncing)
+- Leaves room for future: `Publishers.Behaviour`, `Sync.Behaviour`
 
 **Key callbacks:**
 - `url_patterns/0` - Which URLs this scraper handles
@@ -93,7 +98,7 @@ iex> Scraper.scrape_url("https://pnet.co.za/jobs")
 **Pattern:**
 ```elixir
 defmodule PNetScraper do
-  @behaviour JobBoardBehaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   @impl true
   def url_patterns do
@@ -234,7 +239,7 @@ When adding a new job board scraper:
   - [ ] Extract full job data
 
 - [ ] **Step 3:** Create scraper module
-  - [ ] Implement `JobBoardBehaviour`
+  - [ ] Implement `Scrapers.Behaviour`
   - [ ] Add `url_patterns/0` with domain and path patterns
   - [ ] Implement `scrape_listing_page/1`
   - [ ] Implement `scrape_detail_page/1` (if needed)
@@ -328,5 +333,42 @@ iex> H.scrape(url)
    - Makes exploration fast and fun
 
 **Result:** Best of both worlds - explicit control when needed, auto-magic when convenient!
+
+---
+
+## Future: Other Job Board Behaviours
+
+Our naming strategy leaves room for future job board interactions:
+
+### Scraping (Current)
+```elixir
+defmodule Hirehound.Scrapers.Behaviour do
+  @callback scrape_listing_page(url) :: {:ok, list()}
+  @callback scrape_detail_page(url) :: {:ok, map()}
+  # ... focused on reading data
+end
+```
+
+### Publishing (Future)
+```elixir
+defmodule Hirehound.Publishers.Behaviour do
+  @callback post_job(board_credentials, job_posting) :: {:ok, job_id} | {:error, term()}
+  @callback update_job(board_credentials, job_id, changes) :: :ok | {:error, term()}
+  @callback delete_job(board_credentials, job_id) :: :ok | {:error, term()}
+  @callback supports_feature?(feature) :: boolean()
+  # ... focused on writing data
+end
+```
+
+### Syncing (Future)
+```elixir
+defmodule Hirehound.Sync.Behaviour do
+  @callback sync_job(credentials, job_posting) :: {:ok, :created | :updated | :unchanged}
+  @callback reconcile_differences(local, remote) :: {:ok, resolution}
+  # ... bidirectional sync
+end
+```
+
+**Each namespace has its own behaviour** - clean separation of concerns!
 
 ---

@@ -156,7 +156,7 @@ iex> company = Floki.find(first, ".company-name") |> Floki.text()
 
 ```bash
 # Create behaviour file
-touch lib/hirehound/scrapers/job_board_behaviour.ex
+touch lib/hirehound/scrapers/behaviour.ex
 
 # Create PNet scraper
 touch lib/hirehound/scrapers/pnet_scraper.ex

@@ -70,7 +70,12 @@ A module that implements scraping logic for a specific job board.
 1. **Direct call:** `PNetScraper.scrape_listing_page(url)` - When you know which scraper
 2. **Auto-routing:** `Scraper.scrape_url(url)` - System detects which scraper based on URL
 
-**Behaviour:** All scrapers implement `JobBoardBehaviour`
+**Behaviour:** All scrapers implement `Hirehound.Scrapers.Behaviour`
+
+**Why "Scrapers.Behaviour" not "JobBoardBehaviour"?**
+- Specific to scraping (not publishing or syncing)
+- Leaves room for future: `Publishers.Behaviour`, `Sync.Behaviour`
+- Clear separation of concerns
 
 ---
 

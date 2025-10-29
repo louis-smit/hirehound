@@ -380,17 +380,67 @@ Hirehound.Workers.PNetScrapingWorker.new(%{})
 
 **For Hirehound scrapers:** We use **behaviours** because we have different modules (scrapers) implementing the same interface.
 
-### Defining a JobBoard Behaviour
+### Why "Scrapers.Behaviour" and Not "JobBoardBehaviour"?
+
+**Important naming decision:**
+
+We use `Hirehound.Scrapers.Behaviour` instead of `JobBoardBehaviour` because:
+
+1. **Scope-specific:** This behaviour is **only for scraping** (reading data)
+2. **Future-proof:** Leaves room for other job board interactions:
+   - `Hirehound.Publishers.Behaviour` - Posting jobs TO boards
+   - `Hirehound.Sync.Behaviour` - Bidirectional syncing
+   - `Hirehound.Analytics.Behaviour` - Tracking/reporting
+3. **Namespace clarity:** Already in `Scrapers` module, so context is obvious
+4. **Clean separation:** Each concern (scraping, publishing, syncing) gets its own behaviour
+
+**Bad naming (too generic):**
+```elixir
+defmodule Hirehound.JobBoardBehaviour do
+  # Too broad - what does this do with job boards?
+  # Scraping? Publishing? Syncing? Analytics?
+end
+```
+
+**Good naming (specific and extensible):**
+```elixir
+# Clear - this is for scraping
+defmodule Hirehound.Scrapers.Behaviour do
+  @callback scrape_listing_page(url) :: {:ok, list()}
+end
+
+# Future - this is for publishing
+defmodule Hirehound.Publishers.Behaviour do
+  @callback post_job(credentials, job) :: {:ok, id}
+end
+
+# Future - this is for syncing
+defmodule Hirehound.Sync.Behaviour do
+  @callback sync_job(credentials, job) :: :ok
+end
+```
+
+### Defining the Scraper Behaviour
 
 Create behaviours for extensibility and polymorphism:
 
 ```elixir
-# lib/hirehound/scrapers/job_board_behaviour.ex
-defmodule Hirehound.Scrapers.JobBoardBehaviour do
+# lib/hirehound/scrapers/behaviour.ex
+defmodule Hirehound.Scrapers.Behaviour do
   @moduledoc """
   Behaviour for job board scrapers.
   
   Each job board (PNet, LinkedIn, CareerJunction) implements this behaviour.
+  
+  ## Why "Behaviour" not "JobBoardBehaviour"?
+  
+  This behaviour is specifically for SCRAPING job boards. In the future,
+  we may add other behaviours for:
+  - `Publishers.Behaviour` - Posting jobs TO job boards
+  - `Sync.Behaviour` - Bidirectional syncing
+  
+  Keeping the name short and namespaced (`Scrapers.Behaviour`) makes the
+  purpose clear while leaving room for future job board interactions.
   
   ## IMPORTANT: Listing Pages vs Detail Pages
   
@@ -504,7 +554,7 @@ end
 ```elixir
 # lib/hirehound/scrapers/pnet_scraper.ex
 defmodule Hirehound.Scrapers.PNetScraper do
-  @behaviour Hirehound.Scrapers.JobBoardBehaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   # @impl ensures we're implementing a callback
   # Compiler will warn if signature doesn't match
@@ -620,7 +670,7 @@ Some job boards include full job information on the listing page itself.
 ```elixir
 # lib/hirehound/scrapers/simple_board_scraper.ex
 defmodule Hirehound.Scrapers.SimpleBoardScraper do
-  @behaviour Hirehound.Scrapers.JobBoardBehaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   @impl true
   def metadata do
@@ -761,7 +811,7 @@ iex> Scraper.scrape_url("https://pnet.co.za/jobs")
                                                   │
                                                   ↓
                     ┌─────────────────────────────────────────────────────────┐
-                    │         PNetScraper (implements JobBoardBehaviour)      │
+                    │         PNetScraper (implements Scrapers.Behaviour)     │
                     ├─────────────────────────────────────────────────────────┤
                     │  - url_patterns()           (domain mapping)            │
                     │  - scrape_listing_page()    (scrapes MULTIPLE jobs)     │
@@ -1322,7 +1372,7 @@ iex> detail_url = Floki.find(first_job, "a") |> Floki.attribute("href") |> List.
 
 # lib/hirehound/scrapers/pnet_scraper.ex
 defmodule Hirehound.Scrapers.PNetScraper do
-  @behaviour Hirehound.Scrapers.JobBoardBehaviour
+  @behaviour Hirehound.Scrapers.Behaviour
   
   @impl true
   def metadata do

@@ -38,7 +38,7 @@ See @docs/*.md
 
 ### Scraper Architecture
 
-- **Use behaviours** for scrapers: All scrapers implement `Hirehound.Scrapers.JobBoardBehaviour`
+- **Use behaviours** for scrapers: All scrapers implement `Hirehound.Scrapers.Behaviour`
 - **Separate listing vs detail pages:**
   - `scrape_listing_page/1` - Scrapes pages with MULTIPLE jobs (e.g., `/jobs`, `/jobs?page=2`)
   - `scrape_detail_page/1` - Scrapes pages with ONE job (e.g., `/jobs/12345`)
@@ -47,6 +47,7 @@ See @docs/*.md
   - Each scraper implements `url_patterns/0` callback declaring which domains/paths it handles
   - Enables both direct calls (`PNetScraper.scrape_listing_page(url)`) AND auto-routing (`Scraper.scrape_url(url)`)
   - Direct calls for production/tests, auto-routing for IEx exploration and user input
+- **Naming:** Use `Scrapers.Behaviour` (not `JobBoardBehaviour`) to leave room for future `Publishers.Behaviour`, `Sync.Behaviour`
 
 ### Data Model
 
