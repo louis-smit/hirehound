@@ -525,6 +525,37 @@ defmodule Hirehound.Scrapers.Behaviour do
   Extracts the next listing page URL from HTML.
   """
   @callback next_page_url(html :: String.t()) :: String.t() | nil
+  
+  @doc """
+  Checks if a job card/element indicates the job is expired/filled/closed.
+  
+  Each job board has different ways of indicating expired jobs:
+  - "Expired" badge/label
+  - "Position filled" text
+  - "Closed" status
+  - Greyed-out styling
+  - "No longer accepting applications"
+  
+  This is called on listing pages to filter out expired jobs before
+  scraping detail pages or storing data.
+  
+  ## Parameters
+  
+  - `job_element` - The Floki HTML element for the job card/listing
+  
+  ## Returns
+  
+  - `true` if job is expired/filled/closed
+  - `false` if job is still active
+  
+  ## Example
+  
+      def is_expired?(job_element) do
+        # Check for "Expired" badge
+        Floki.find(job_element, ".badge-expired") != []
+      end
+  """
+  @callback is_expired?(job_element :: Floki.html_tree()) :: boolean()
 end
 ```
 
@@ -569,6 +600,7 @@ defmodule Hirehound.Scrapers.PNetScraper do
       jobs = 
         doc
         |> Floki.find(".job-result-card")  # Listing page selector
+        |> Enum.reject(&is_expired?/1)  # Filter out expired jobs!
         |> Enum.map(fn card ->
           %{
             title: Floki.find(card, ".job-title") |> Floki.text(),
@@ -581,6 +613,20 @@ defmodule Hirehound.Scrapers.PNetScraper do
       
       {:ok, jobs}
     end
+  end
+  
+  @impl true
+  def is_expired?(job_element) do
+    # PNet-specific: check for expired badge or "Filled" status
+    has_expired_badge = Floki.find(job_element, ".badge-expired") != []
+    has_filled_text = 
+      job_element
+      |> Floki.find(".job-status")
+      |> Floki.text()
+      |> String.downcase()
+      |> String.contains?(["filled", "closed", "expired"])
+    
+    has_expired_badge or has_filled_text
   end
   
   @impl true

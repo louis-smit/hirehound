@@ -77,6 +77,27 @@ A module that implements scraping logic for a specific job board.
 - Leaves room for future: `Publishers.Behaviour`, `Sync.Behaviour`
 - Clear separation of concerns
 
+### Expired Job Detection
+The process of identifying jobs that are **no longer accepting applications** on listing pages, before scraping or storing them.
+
+**Common indicators:**
+- "Expired" badge/label
+- "Position filled" text
+- "Closed" status
+- Greyed-out styling
+- "No longer accepting applications" message
+
+**Implementation:** Each scraper implements `is_expired?/1` callback from `Scrapers.Behaviour` to check job elements for board-specific expired indicators.
+
+**Example:**
+```elixir
+def is_expired?(job_element) do
+  Floki.find(job_element, ".badge-expired") != []
+end
+```
+
+**Benefit:** Avoids wasting resources scraping detail pages or storing data for jobs that are no longer available.
+
 ---
 
 ## Deduplication Concepts
