@@ -25,31 +25,33 @@ config :hirehound, Oban,
   plugins: [
     {Oban.Plugins.Cron,
       crontab: [
-        # Every hour, scrape PNet's first page
-        {"0 * * * *", Hirehound.Workers.PNetKickoff}
+        # Scrape PNet hourly - direct job insertion
+        {"0 * * * *", {Hirehound.Workers.ListingCrawler, 
+          args: %{url: "https://www.pnet.co.za/jobs", board: "pnet", page: 1}}},
+        
+        # Scrape LinkedIn every 2 hours (when implemented)
+        # {"0 */2 * * *", {Hirehound.Workers.ListingCrawler,
+        #   args: %{url: "https://linkedin.com/jobs/search?location=South+Africa", board: "linkedin", page: 1}}},
+        
+        # Scrape CareerJunction daily at 2am (when implemented)
+        # {"0 2 * * *", {Hirehound.Workers.ListingCrawler,
+        #   args: %{url: "https://careerjunction.co.za/jobs", board: "careerjunction", page: 1}}}
       ]}
   ]
 ```
 
 **What happens:**
-- **Every hour**, Oban cron plugin triggers `PNetKickoff` worker
-- This worker inserts **one job** into the queue: "Scrape PNet page 1"
+- **Every hour**, Oban cron plugin **directly inserts** a ListingCrawler job
+- No intermediate "kickoff" worker needed
+- Args are passed directly to the worker
 
-```elixir
-defmodule Hirehound.Workers.PNetKickoff do
-  use Oban.Worker, queue: :scraping
-  
-  @impl Oban.Worker
-  def perform(%Job{}) do
-    # Insert first listing page job
-    %{url: "https://www.pnet.co.za/jobs", board: "pnet", page: 1}
-    |> Workers.ListingCrawler.new()
-    |> Oban.insert()
-    
-    :ok
-  end
-end
-```
+**Why this approach:**
+- ✅ No boilerplate kickoff workers
+- ✅ Clear what's being scraped (visible in config)
+- ✅ Easy to add new boards (just add crontab entry)
+- ✅ Good for 1-5 boards (our current scale)
+
+**Future migration:** When we have 10+ boards, we'll move to database-driven configuration with an admin UI.
 
 **Result:** One Oban job in the `scraping` queue waiting to run.
 
@@ -276,8 +278,7 @@ config :hirehound, Oban,
 ### Timeline Visualization
 
 ```
-T+0s:  Cron triggers PNetKickoff
-       └─> Inserts ListingCrawler job (page 1)
+T+0s:  Cron directly inserts ListingCrawler job (page 1)
 
 T+1s:  Worker picks up page 1 job
        ├─> Fetches HTML
