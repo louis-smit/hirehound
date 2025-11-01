@@ -143,6 +143,20 @@ Detailed implementation roadmap with phases, tasks, and deliverables.
 - **Migration path** week-by-week
 - **Addresses "start simple" concern**
 
+### 📦 [12 - Scraping-Storage Separation](./12-scraping-storage-separation.md)
+
+**How to cleanly separate data extraction from database storage.**
+
+**Key Topics:**
+
+- **Scrapers as pure functions** (return data, no side effects)
+- **Normalization pipeline** (pure transformations)
+- **Validation layer** (quality checks)
+- **Ingestion module** (single point of storage)
+- **Testing without database**
+- **IEx workflow** (scrape → normalize → validate → save)
+- **Dry-run/preview mode**
+
 ## Quick Start Guide
 
 If you're new to the project, we recommend reading in this order:
@@ -151,11 +165,12 @@ If you're new to the project, we recommend reading in this order:
 2. **[Project Overview](./01-project-overview.md)** - Understand the "why"
 3. **[Development Practices](./06-development-practices.md)** - See how we build (IEx-first!)
 4. **[Scraper Architecture](./07-scraper-architecture.md)** - Quick reference for scraping
-5. **[Job Posting Standards](./02-job-posting-standards.md)** - Learn the data model
-6. **[Deduplication Strategy](./03-deduplication-strategy.md)** - Understand the core challenge
-7. **[Workflow Orchestration](./05-workflow-orchestration.md)** - See background job architecture
-8. **[Next Steps](./04-next-steps.md)** - Detailed implementation roadmap
-9. **[Implementation Plan](./08-implementation-plan.md)** - Ready to code? Start here!
+5. **[Scraping-Storage Separation](./12-scraping-storage-separation.md)** - Clean architecture pattern
+6. **[Job Posting Standards](./02-job-posting-standards.md)** - Learn the data model
+7. **[Deduplication Strategy](./03-deduplication-strategy.md)** - Understand the core challenge
+8. **[Workflow Orchestration](./05-workflow-orchestration.md)** - See background job architecture
+9. **[Next Steps](./04-next-steps.md)** - Detailed implementation roadmap
+10. **[Implementation Plan](./08-implementation-plan.md)** - Ready to code? Start here!
 
 ## Current Phase
 

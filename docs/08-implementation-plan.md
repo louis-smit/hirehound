@@ -394,26 +394,27 @@ touch lib/hirehound/companies/name_matcher.ex
 - Functions for title, location, date parsing
 - Test each function in IEx before writing tests
 
-#### 3.3 Integration: Save Scraped Jobs
+#### 3.3 Integration: Pipeline Testing
 
 **In IEx:**
 ```elixir
 iex> {:ok, raw_jobs} = PNetScraper.scrape_listing_page(url)
 iex> first_raw = List.first(raw_jobs)
 
-# Find or create company
-iex> {:ok, company} = Companies.find_or_create_by_name(first_raw.company)
+# Test normalization (pure - no DB)
+iex> {:ok, normalized} = Jobs.Normalization.normalize(first_raw)
 
-# Normalize job
-iex> normalized = Jobs.Normalization.normalize(first_raw)
+# Test validation (pure - no DB)
+iex> {:ok, validated} = Jobs.Validation.validate(normalized)
 
-# Save to database
-iex> %JobPosting{}
-     |> JobPosting.changeset(Map.put(normalized, :company_id, company.id))
-     |> Repo.insert()
+# Only NOW save to DB (if you want)
+iex> {:ok, job_posting} = Jobs.Ingestion.save(validated)
 ```
 
-**Then codify into `Jobs.Ingestion.process_raw_job/1`**
+**Then codify:**
+- Create `lib/hirehound/jobs/normalization.ex` (pure functions)
+- Create `lib/hirehound/jobs/validation.ex` (pure functions)
+- Create `lib/hirehound/jobs/ingestion.ex` (handles DB operations)
 
 ---
 
@@ -540,9 +541,11 @@ config :hirehound, Oban,
 ### Priority 3: Basic Integration ⚡
 
 1. [ ] Build company name matcher
-2. [ ] Build job normalization
-3. [ ] Integrate: scrape → normalize → save to DB
-4. [ ] Test end-to-end in IEx
+2. [ ] Build job normalization (pure functions)
+3. [ ] Build job validation (pure functions)
+4. [ ] Build job ingestion (DB storage)
+5. [ ] Integrate pipeline: scrape → normalize → validate → save
+6. [ ] Test end-to-end in IEx
 
 **Time estimate:** 3-4 hours
 

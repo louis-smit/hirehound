@@ -125,41 +125,35 @@ defmodule Hirehound.Workers.DetailScraper do
   
   @impl Oban.Worker
   def perform(%Job{args: %{"url" => url, "board" => board}}) do
-    # 1. Fetch detail page HTML
-    {:ok, html} = Fetcher.fetch_html(url)
-    
-    # 2. Parse full job data
     scraper = get_scraper(board)
-    {:ok, job_data} = scraper.scrape_detail_page(url)
     
-    # 3. Normalize data
-    {:ok, normalized} = Jobs.Normalization.normalize(job_data)
-    
-    # 4. Match or create company
-    {:ok, company} = Companies.find_or_create_by_name(normalized.company_name)
-    
-    # 5. Save to database
-    {:ok, job_posting} = Jobs.create_posting(
-      Map.put(normalized, :company_id, company.id)
-    )
-    
-    # 6. Enqueue downstream processing
-    %{job_posting_id: job_posting.id}
-    |> Workers.DeduplicationWorker.new()
-    |> Oban.insert()
-    
-    :ok
+    # Pipeline: scrape → normalize → validate → save
+    with {:ok, raw_data} <- scraper.scrape_detail_page(url),
+         {:ok, normalized} <- Jobs.Normalization.normalize(raw_data),
+         {:ok, validated} <- Jobs.Validation.validate(normalized),
+         {:ok, job_posting} <- Jobs.Ingestion.save(validated) do
+      
+      # Enqueue deduplication
+      %{job_posting_id: job_posting.id}
+      |> Workers.DeduplicationWorker.new()
+      |> Oban.insert()
+      
+      {:ok, job_posting}
+    else
+      {:error, reason} ->
+        Logger.warning("Failed to process job: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 end
 ```
 
 **What happens:**
-1. **Worker fetches detail page** (e.g., `/jobs/12345`)
-2. **Extracts full job description, requirements, salary**
-3. **Normalizes data** (clean company names, parse dates)
-4. **Creates/finds company** in database
-5. **Saves job posting** to `job_postings` table
-6. **Enqueues deduplication** for this new job
+1. **Scraper extracts data** (pure - returns map)
+2. **Normalization transforms** (pure - cleans/standardizes)
+3. **Validation checks quality** (pure - calculates score)
+4. **Ingestion saves** (side effect - DB insert)
+5. **Enqueues deduplication** for this new job
 
 **Parallelization:**
 - This runs in `processing` queue with `limit: 20`
